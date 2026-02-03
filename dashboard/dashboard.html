@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supply Chain Domino Analyzer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.26.0/plotly.min.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Sample data - in production, this would come from your trained model
+        const companies = [
+            'Nvidia', 'TSMC', 'Apple', 'Microsoft', 'Tesla', 'AMD', 'Google', 
+            'Amazon', 'Intel', 'Samsung', 'Foxconn', 'ASML', 'Panasonic', 'LG',
+            'CATL', 'Ford', 'GM', 'Qualcomm', 'MediaTek', 'Sony', 'Dell', 'HP',
+            'Meta', 'ByteDance', 'Alibaba', 'Tencent', 'SK_Hynix', 'Bosch', 'Denso'
+        ];
+
+        const predefinedScenarios = [
+            {
+                name: 'Taiwan Earthquake',
+                description: 'Major earthquake disrupts TSMC production',
+                affected: ['TSMC'],
+                intensity: 0.9
+            },
+            {
+                name: 'Lithium Supply Shock',
+                description: 'Lithium mining disruption causes battery price surge',
+                affected: ['Panasonic', 'LG', 'CATL', 'Samsung'],
+                intensity: 0.8
+            },
+            {
+                name: 'AI Chip Supply Constraint',
+                description: 'Nvidia cannot meet surging AI chip demand',
+                affected: ['Nvidia'],
+                intensity: 0.7
+            },
+            {
+                name: 'Rare Earth Export Ban',
+                description: 'China restricts critical rare earth element exports',
+                affected: ['ASML', 'Samsung', 'SK_Hynix'],
+                intensity: 0.85
+            },
+            {
+                name: 'Energy Crisis',
+                description: 'Energy shortage affects semiconductor manufacturing',
+                affected: ['Samsung', 'TSMC', 'Intel', 'ASML'],
+                intensity: 0.75
+            }
+        ];
+
+        // Simulated risk prediction (replace with actual model API)
+        const simulateRiskPropagation = (affectedCompanies, intensity) => {
+            const risks = {};
+            
+            // Define supply chain dependencies
+            const dependencies = {
+                'TSMC': ['Apple', 'Nvidia', 'AMD', 'Qualcomm', 'MediaTek', 'Sony'],
+                'Nvidia': ['Microsoft', 'Tesla', 'Google', 'Amazon', 'Dell', 'Meta', 'ByteDance', 'Alibaba', 'Tencent'],
+                'Samsung': ['Apple', 'Tesla'],
+                'Panasonic': ['Tesla'],
+                'LG': ['Tesla', 'GM'],
+                'CATL': ['Ford'],
+                'ASML': ['Intel', 'Samsung'],
+                'Intel': ['HP', 'Amazon'],
+                'Foxconn': ['Apple']
+            };
+
+            companies.forEach(company => {
+                if (affectedCompanies.includes(company)) {
+                    risks[company] = intensity;
+                } else {
+                    let risk = 0;
+                    affectedCompanies.forEach(affected => {
+                        if (dependencies[affected]?.includes(company)) {
+                            risk = Math.max(risk, intensity * 0.7);
+                        }
+                        // Check if company supplies the affected
+                        if (dependencies[company]?.includes(affected)) {
+                            risk = Math.max(risk, intensity * 0.5);
+                        }
+                    });
+                    
+                    // Add some randomness for realism
+                    if (risk > 0) {
+                        risk *= (0.8 + Math.random() * 0.4);
+                    }
+                    
+                    risks[company] = Math.min(risk, 1);
+                }
+            });
+
+            return risks;
+        };
+
+        const RiskBadge = ({ score }) => {
+            let bgColor, textColor, label;
+            
+            if (score > 0.7) {
+                bgColor = 'bg-red-100';
+                textColor = 'text-red-800';
+                label = 'Critical';
+            } else if (score > 0.5) {
+                bgColor = 'bg-orange-100';
+                textColor = 'text-orange-800';
+                label = 'High';
+            } else if (score > 0.3) {
+                bgColor = 'bg-yellow-100';
+                textColor = 'text-yellow-800';
+                label = 'Moderate';
+            } else {
+                bgColor = 'bg-green-100';
+                textColor = 'text-green-800';
+                label = 'Low';
+            }
+
+            return (
+                <span className={`px-2 py-1 rounded-full text-xs font-semibold ${bgColor} ${textColor}`}>
+                    {label}
+                </span>
+            );
+        };
+
+        const NetworkVisualization = ({ riskScores, affectedCompanies }) => {
+            const plotRef = useRef(null);
+
+            useEffect(() => {
+                if (!plotRef.current || !riskScores) return;
+
+                // Create network graph
+                const nodes = companies.map(company => ({
+                    name: company,
+                    risk: riskScores[company] || 0,
+                    isAffected: affectedCompanies.includes(company)
+                }));
+
+                // Position nodes in a circle
+                const angleStep = (2 * Math.PI) / nodes.length;
+                nodes.forEach((node, i) => {
+                    const angle = i * angleStep;
+                    node.x = Math.cos(angle) * 2;
+                    node.y = Math.sin(angle) * 2;
+                });
+
+                // Create edges (simplified)
+                const edges = [];
+                const deps = {
+                    'TSMC': ['Apple', 'Nvidia', 'AMD', 'Qualcomm'],
+                    'Nvidia': ['Microsoft', 'Tesla', 'Google', 'Amazon'],
+                    'Samsung': ['Apple', 'Tesla'],
+                    'Intel': ['HP', 'Amazon']
+                };
+
+                Object.entries(deps).forEach(([source, targets]) => {
+                    const sourceNode = nodes.find(n => n.name === source);
+                    targets.forEach(target => {
+                        const targetNode = nodes.find(n => n.name === target);
+                        if (sourceNode && targetNode) {
+                            edges.push({
+                                x: [sourceNode.x, targetNode.x],
+                                y: [sourceNode.y, targetNode.y]
+                            });
+                        }
+                    });
+                });
+
+                // Edge traces
+                const edgeTraces = edges.map(edge => ({
+                    x: edge.x,
+                    y: edge.y,
+                    mode: 'lines',
+                    line: { width: 1, color: '#cbd5e1' },
+                    hoverinfo: 'none',
+                    showlegend: false
+                }));
+
+                // Node trace
+                const nodeTrace = {
+                    x: nodes.map(n => n.x),
+                    y: nodes.map(n => n.y),
+                    mode: 'markers+text',
+                    text: nodes.map(n => n.name),
+                    textposition: 'top center',
+                    textfont: { size: 10, family: 'Arial, sans-serif' },
+                    marker: {
+                        size: nodes.map(n => 15 + n.risk * 25),
+                        color: nodes.map(n => n.risk),
+                        colorscale: [
+                            [0, '#10b981'],
+                            [0.3, '#fbbf24'],
+                            [0.5, '#f97316'],
+                            [1, '#ef4444']
+                        ],
+                        cmin: 0,
+                        cmax: 1,
+                        line: { 
+                            width: nodes.map(n => n.isAffected ? 3 : 1),
+                            color: nodes.map(n => n.isAffected ? '#8b5cf6' : '#fff')
+                        },
+                        colorbar: {
+                            title: 'Risk Score',
+                            thickness: 15,
+                            len: 0.5
+                        }
+                    },
+                    hovertemplate: '<b>%{text}</b><br>Risk: %{marker.color:.1%}<extra></extra>',
+                    showlegend: false
+                };
+
+                const layout = {
+                    title: {
+                        text: 'Supply Chain Network Risk Map',
+                        font: { size: 20, family: 'Arial, sans-serif', weight: 'bold' }
+                    },
+                    showlegend: false,
+                    hovermode: 'closest',
+                    xaxis: { 
+                        showgrid: false, 
+                        zeroline: false, 
+                        showticklabels: false,
+                        range: [-3, 3]
+                    },
+                    yaxis: { 
+                        showgrid: false, 
+                        zeroline: false, 
+                        showticklabels: false,
+                        range: [-3, 3]
+                    },
+                    paper_bgcolor: '#f8fafc',
+                    plot_bgcolor: '#f8fafc',
+                    margin: { l: 20, r: 20, t: 60, b: 20 },
+                    height: 500
+                };
+
+                Plotly.newPlot(plotRef.current, [...edgeTraces, nodeTrace], layout, {
+                    responsive: true,
+                    displayModeBar: false
+                });
+            }, [riskScores, affectedCompanies]);
+
+            return <div ref={plotRef} className="w-full"></div>;
+        };
+
+        const App = () => {
+            const [selectedScenario, setSelectedScenario] = useState(null);
+            const [customAffected, setCustomAffected] = useState([]);
+            const [customIntensity, setCustomIntensity] = useState(0.8);
+            const [riskScores, setRiskScores] = useState(null);
+            const [showCustom, setShowCustom] = useState(false);
+
+            const runScenario = (scenario) => {
+                setSelectedScenario(scenario);
+                const risks = simulateRiskPropagation(scenario.affected, scenario.intensity);
+                setRiskScores(risks);
+            };
+
+            const runCustomScenario = () => {
+                if (customAffected.length === 0) return;
+                
+                const scenario = {
+                    name: 'Custom Scenario',
+                    affected: customAffected,
+                    intensity: customIntensity
+                };
+                runScenario(scenario);
+            };
+
+            const toggleCompany = (company) => {
+                setCustomAffected(prev => 
+                    prev.includes(company)
+                        ? prev.filter(c => c !== company)
+                        : [...prev, company]
+                );
+            };
+
+            const sortedResults = riskScores 
+                ? Object.entries(riskScores)
+                    .sort((a, b) => b[1] - a[1])
+                    .filter(([_, score]) => score > 0.1)
+                : [];
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+                    <div className="container mx-auto px-4 py-8 max-w-7xl">
+                        {/* Header */}
+                        <div className="text-center mb-8">
+                            <h1 className="text-4xl font-bold text-slate-800 mb-2">
+                                🔗 Supply Chain Domino Analyzer
+                            </h1>
+                            <p className="text-lg text-slate-600">
+                                Predict how supply chain shocks propagate through interconnected companies
+                            </p>
+                        </div>
+
+                        {/* Scenario Selection */}
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                            {/* Predefined Scenarios */}
+                            <div className="lg:col-span-2 bg-white rounded-lg shadow-md p-6">
+                                <h2 className="text-xl font-bold text-slate-800 mb-4">
+                                    📋 Predefined Crisis Scenarios
+                                </h2>
+                                <div className="space-y-3">
+                                    {predefinedScenarios.map((scenario, idx) => (
+                                        <button
+                                            key={idx}
+                                            onClick={() => runScenario(scenario)}
+                                            className={`w-full text-left p-4 rounded-lg border-2 transition-all ${
+                                                selectedScenario?.name === scenario.name
+                                                    ? 'border-blue-500 bg-blue-50'
+                                                    : 'border-slate-200 hover:border-blue-300 hover:bg-slate-50'
+                                            }`}
+                                        >
+                                            <div className="flex justify-between items-start mb-2">
+                                                <h3 className="font-semibold text-slate-800">
+                                                    {scenario.name}
+                                                </h3>
+                                                <span className="text-xs bg-slate-200 px-2 py-1 rounded">
+                                                    {(scenario.intensity * 100).toFixed(0)}% intensity
+                                                </span>
+                                            </div>
+                                            <p className="text-sm text-slate-600 mb-2">
+                                                {scenario.description}
+                                            </p>
+                                            <p className="text-xs text-slate-500">
+                                                Affected: {scenario.affected.join(', ')}
+                                            </p>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Custom Scenario */}
+                            <div className="bg-white rounded-lg shadow-md p-6">
+                                <h2 className="text-xl font-bold text-slate-800 mb-4">
+                                    🎯 Custom Scenario
+                                </h2>
+                                
+                                <div className="mb-4">
+                                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                                        Shock Intensity: {(customIntensity * 100).toFixed(0)}%
+                                    </label>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="100"
+                                        value={customIntensity * 100}
+                                        onChange={(e) => setCustomIntensity(e.target.value / 100)}
+                                        className="w-full"
+                                    />
+                                </div>
+
+                                <div className="mb-4">
+                                    <button
+                                        onClick={() => setShowCustom(!showCustom)}
+                                        className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                                    >
+                                        {showCustom ? '▼' : '▶'} Select Affected Companies
+                                    </button>
+                                    
+                                    {showCustom && (
+                                        <div className="mt-2 max-h-64 overflow-y-auto border rounded p-2">
+                                            {companies.sort().map(company => (
+                                                <label key={company} className="flex items-center p-1 hover:bg-slate-50 cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={customAffected.includes(company)}
+                                                        onChange={() => toggleCompany(company)}
+                                                        className="mr-2"
+                                                    />
+                                                    <span className="text-sm">{company}</span>
+                                                </label>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="text-sm text-slate-600 mb-3">
+                                    Selected: {customAffected.length} companies
+                                </div>
+
+                                <button
+                                    onClick={runCustomScenario}
+                                    disabled={customAffected.length === 0}
+                                    className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors"
+                                >
+                                    Run Custom Scenario
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Results */}
+                        {riskScores && (
+                            <div className="space-y-6">
+                                {/* Network Visualization */}
+                                <div className="bg-white rounded-lg shadow-md p-6">
+                                    <NetworkVisualization 
+                                        riskScores={riskScores}
+                                        affectedCompanies={selectedScenario?.affected || []}
+                                    />
+                                </div>
+
+                                {/* Risk Rankings */}
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                    <div className="bg-white rounded-lg shadow-md p-6">
+                                        <h2 className="text-xl font-bold text-slate-800 mb-4">
+                                            📊 Impact Summary
+                                        </h2>
+                                        <div className="space-y-2">
+                                            <div className="flex justify-between items-center p-3 bg-red-50 rounded">
+                                                <span className="font-medium text-slate-700">Critical Risk (&gt;70%)</span>
+                                                <span className="font-bold text-red-600">
+                                                    {sortedResults.filter(([_, s]) => s > 0.7).length}
+                                                </span>
+                                            </div>
+                                            <div className="flex justify-between items-center p-3 bg-orange-50 rounded">
+                                                <span className="font-medium text-slate-700">High Risk (50-70%)</span>
+                                                <span className="font-bold text-orange-600">
+                                                    {sortedResults.filter(([_, s]) => s > 0.5 && s <= 0.7).length}
+                                                </span>
+                                            </div>
+                                            <div className="flex justify-between items-center p-3 bg-yellow-50 rounded">
+                                                <span className="font-medium text-slate-700">Moderate Risk (30-50%)</span>
+                                                <span className="font-bold text-yellow-600">
+                                                    {sortedResults.filter(([_, s]) => s > 0.3 && s <= 0.5).length}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-white rounded-lg shadow-md p-6">
+                                        <h2 className="text-xl font-bold text-slate-800 mb-4">
+                                            💥 Top 10 Most Vulnerable
+                                        </h2>
+                                        <div className="space-y-2">
+                                            {sortedResults.slice(0, 10).map(([company, score], idx) => (
+                                                <div key={company} className="flex items-center justify-between p-2 hover:bg-slate-50 rounded">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-sm font-bold text-slate-400 w-6">
+                                                            {idx + 1}.
+                                                        </span>
+                                                        <span className="font-medium text-slate-800">
+                                                            {company}
+                                                        </span>
+                                                        {selectedScenario?.affected.includes(company) && (
+                                                            <span className="text-xs bg-purple-100 text-purple-800 px-2 py-0.5 rounded">
+                                                                Epicenter
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center gap-3">
+                                                        <span className="font-bold text-slate-700">
+                                                            {(score * 100).toFixed(1)}%
+                                                        </span>
+                                                        <RiskBadge score={score} />
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {!riskScores && (
+                            <div className="bg-white rounded-lg shadow-md p-12 text-center">
+                                <div className="text-6xl mb-4">🔍</div>
+                                <h3 className="text-xl font-semibold text-slate-700 mb-2">
+                                    Select a Scenario to Begin
+                                </h3>
+                                <p className="text-slate-500">
+                                    Choose a predefined crisis scenario or create your own to see how supply chain shocks propagate
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
