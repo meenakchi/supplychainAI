@@ -45,18 +45,19 @@ class SupplyChainDataLoader:
             target = row['target']
             relationship = row['relationship']
             
-            # Add edge (direction matters!)
-            # Supplier -> Customer means dependency flows downstream
+            # --- FIXED LOGIC: Force arrows to always point Producer -> Consumer ---
             if relationship == 'Supplier':
-                # If A is supplier to B, then B depends on A
-                self.graph.add_edge(source, target, relationship=relationship)
+                # 'Nvidia, TSMC, Supplier' means TSMC supplies Nvidia. 
+                # Arrow points TSMC -> Nvidia
+                self.graph.add_edge(target, source, relationship='Supplier')
             elif relationship == 'Customer':
-                # If A is customer of B, then A depends on B
+                # 'Microsoft, Nvidia, Customer' means Nvidia supplies Microsoft. 
+                # Arrow points Nvidia -> Microsoft
                 self.graph.add_edge(target, source, relationship='Supplier')
         
         print(f"Built graph with {self.graph.number_of_nodes()} nodes and {self.graph.number_of_edges()} edges")
         return self.graph
-    
+
     def create_node_mapping(self) -> Tuple[Dict, Dict]:
         """Create bidirectional mapping between company names and indices"""
         companies = list(self.graph.nodes())
@@ -103,15 +104,9 @@ class SupplyChainDataLoader:
         return self.node_features
     
     def to_pytorch_geometric(self) -> Data:
-        """
-        Convert NetworkX graph to PyTorch Geometric Data object
-        
-        Returns:
-            PyTorch Geometric Data object
-        """
-        # Relabel nodes to use integer indices
-        mapping = {company: idx for idx, company in enumerate(self.graph.nodes())}
-        G_relabeled = nx.relabel_nodes(self.graph, mapping)
+        """Convert NetworkX graph to PyTorch Geometric Data object"""
+        # FIX: Use the exact pre-existing map so features match the right company
+        G_relabeled = nx.relabel_nodes(self.graph, self.company_to_idx)
         
         # Convert to PyTorch Geometric
         data = from_networkx(G_relabeled)
@@ -123,6 +118,7 @@ class SupplyChainDataLoader:
         data.company_names = [self.idx_to_company[i] for i in range(len(self.idx_to_company))]
         
         return data
+
     
     def get_company_neighbors(self, company: str, direction: str = 'both') -> List[str]:
         """

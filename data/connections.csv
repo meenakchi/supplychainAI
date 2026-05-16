@@ -29,3 +29,67 @@ Meta,Nvidia,Customer
 ByteDance,Nvidia,Customer
 Alibaba,Nvidia,Customer
 Tencent,Nvidia,Customer
+MP Materials,Apple,Customer
+Apple,Murata Manufacturing,Supplier
+Apple,TDK,Supplier
+Apple,Kyocera,Supplier
+Apple,Cirrus Logic,Supplier
+Apple,Skyworks Solutions,Supplier
+Apple,Qorvo,Supplier
+Apple,Broadcom,Supplier
+Apple,Corning,Supplier
+Apple,Luxshare Precision,Supplier
+Apple,Jabil,Supplier
+Apple,Pegatron,Supplier
+Apple,Wistron,Supplier
+Apple,LG Display,Supplier
+Apple,LG Chem,Supplier
+Apple,LG Innotek,Supplier
+Apple,Sony,Supplier
+Apple,Samsung SDI,Supplier
+Apple,Micron Technology,Supplier
+Apple,Western Digital,Supplier
+Apple,Texas Instruments,Supplier
+Apple,NXP Semiconductors,Supplier
+Apple,STMicroelectronics,Supplier
+Apple,Infineon Technologies,Supplier
+Apple,Analog Devices,Supplier
+Apple,Kioxia,Supplier
+Apple,Sharp,Supplier
+Apple,BOE Technology,Supplier
+Apple,Intel,Supplier
+Apple,Panasonic,Supplier
+Apple,Nidec,Supplier
+Apple,Amkor Technology,Supplier
+Apple,ASE Technology,Supplier
+Apple,Renesas Electronics,Supplier
+Apple,ON Semiconductor,Supplier
+Apple,Sumitomo Electric,Supplier
+Apple,Robert Bosch,Supplier
+Apple,Goertek,Supplier
+Qualcomm,Samsung,Supplier
+Qualcomm,GlobalFoundries,Supplier
+Apple,Qualcomm,Customer
+Samsung,Qualcomm,Customer
+Xiaomi,Qualcomm,Customer
+Tesla,CATL,Supplier
+AMD,GlobalFoundries,Supplier
+AMD,Samsung,Supplier
+AMD,UMC,Supplier
+Sony,AMD,Customer
+Intel,TSMC,Supplier
+Intel,Samsung,Supplier
+Intel,GlobalFoundries,Supplier
+Intel,UMC,Supplier
+Intel,Mobileye,Customer
+Intel,Altera,Customer
+Amazon,Intel,Customer
+Microsoft,Intel,Customer
+HP,Intel,Customer
+Dell,Intel,Customer
+Lenovo,Intel,Customer
+Asus,Intel,Customer
+Acer,Intel,Customer
+Intel,Brookfield,Customer
+Intel,Apollo,Customer
+Intel,SK_Hynix,Customer
