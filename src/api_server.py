@@ -1,386 +1,395 @@
 """
-FastAPI Backend for Supply Chain Risk Analyzer
-Provides REST API for risk predictions and scenario analysis
+FastAPI Backend — Supply Chain Risk Analyzer
+Fixed version: loads real graph from connections.csv, runs proper BFS propagation.
+GNN model loaded if available; falls back to graph-based simulation otherwise.
 """
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
-import torch
-import pickle
-import uvicorn
 from datetime import datetime
+import os, sys, pickle, json
+import numpy as np
+import pandas as pd
+import networkx as nx
 
-# Import our modules
-import sys
-sys.path.append('/home/claude/src')
-from model import SupplyChainGNN, CrisisScenarios
-from data_fetcher import MarketDataFetcher, CompanyTickerMapper
-
+# ── Optional GNN import ───────────────────────────────────────────────────────
+try:
+    import torch
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+    from model import SupplyChainGNN
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
 
 app = FastAPI(
-    title="Supply Chain Risk Analyzer API",
-    description="Predict supply chain risk propagation using Graph Neural Networks",
-    version="1.0.0"
+    title="Supply Chain Risk Analyzer",
+    description="Graph-based supply chain risk propagation with optional GNN inference.",
+    version="2.0.0",
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ── Pydantic schemas ──────────────────────────────────────────────────────────
 
-# Pydantic models for request/response
 class ShockScenario(BaseModel):
-    """Request model for shock scenario"""
-    affected_companies: List[str] = Field(..., description="Companies experiencing the shock")
-    intensity: float = Field(0.8, ge=0.0, le=1.0, description="Shock intensity (0-1)")
-    scenario_name: Optional[str] = Field(None, description="Optional scenario name")
+    affected_companies: List[str] = Field(..., description="Epicentre companies")
+    intensity: float             = Field(0.8, ge=0.0, le=1.0)
+    scenario_name: Optional[str] = None
+    monte_carlo_n: int           = Field(0, ge=0, le=2000,
+                                         description="If >0, run MC and return percentiles")
 
 
-class RiskPrediction(BaseModel):
-    """Response model for risk prediction"""
-    company: str
+class NodeRisk(BaseModel):
+    company:    str
     risk_score: float
     risk_level: str
-    ticker: Optional[str]
     is_epicenter: bool
+    p5:  Optional[float] = None
+    p50: Optional[float] = None
+    p95: Optional[float] = None
+    std: Optional[float] = None
 
 
 class ScenarioResult(BaseModel):
-    """Complete scenario analysis result"""
-    scenario_name: str
+    scenario_name:      str
     affected_companies: List[str]
-    intensity: float
-    timestamp: str
-    predictions: List[RiskPrediction]
-    summary: Dict[str, int]
+    intensity:          float
+    inference_mode:     str          # "gnn" | "bfs"
+    timestamp:          str
+    predictions:        List[NodeRisk]
+    summary:            Dict[str, int]
 
 
-class CompanyInfo(BaseModel):
-    """Company information"""
-    name: str
-    ticker: Optional[str]
-    suppliers: List[str]
-    customers: List[str]
-    centrality_metrics: Dict[str, float]
+# ── App state ─────────────────────────────────────────────────────────────────
 
-
-# Global state
-model_state = {
-    'model': None,
-    'data': None,
-    'mappings': None,
-    'fetcher': None,
-    'device': None
+state: Dict = {
+    "graph":           None,   # nx.DiGraph
+    "company_to_idx":  None,
+    "idx_to_company":  None,
+    "gnn_model":       None,
+    "gnn_data":        None,
+    "device":          None,
 }
 
+CONNECTIONS_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "data", "connections.csv"
+)
+MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "models")
+
+
+# ── Graph helpers ─────────────────────────────────────────────────────────────
+
+def load_graph(path: str) -> nx.DiGraph:
+    """Build directed supply-chain graph from CSV.
+
+    CSV columns: source, target, relationship
+    relationship ∈ {Supplier, Customer}
+
+    Edge direction: supplier → customer  (risk flows downstream)
+    """
+    df = pd.read_csv(path)
+    G  = nx.DiGraph()
+
+    for _, row in df.iterrows():
+        src, tgt, rel = row["source"], row["target"], row["relationship"]
+        if rel == "Supplier":
+            G.add_edge(src, tgt)   # src supplies tgt
+        elif rel == "Customer":
+            G.add_edge(tgt, src)   # tgt supplies src
+        else:
+            G.add_edge(src, tgt)
+
+    return G
+
+
+def bfs_propagate(
+    G: nx.DiGraph,
+    epicenters: List[str],
+    intensity: float,
+    rng: Optional[np.random.Generator] = None,
+) -> Dict[str, float]:
+    """BFS propagation over real graph edges.
+
+    Downstream (supplier shock → customers): decay 0.72 per hop
+    Upstream   (demand shock → suppliers):   decay 0.42 per hop
+    Random noise per edge if rng is provided (Monte Carlo mode).
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+
+    scores = {n: 0.0 for n in G.nodes}
+    for e in epicenters:
+        if e in scores:
+            scores[e] = float(intensity)
+
+    DECAY_DOWN = 0.72
+    DECAY_UP   = 0.42
+
+    # ── downstream ──────────────────────────────
+    queue, visited = list(epicenters), set(epicenters)
+    while queue:
+        node = queue.pop(0)
+        node_risk = scores[node]
+        if node_risk < 0.04:
+            continue
+        for customer in G.successors(node):
+            prop = node_risk * DECAY_DOWN * rng.uniform(0.75, 1.15)
+            prop = min(prop, 1.0)
+            if prop > scores[customer]:
+                scores[customer] = prop
+                if customer not in visited:
+                    visited.add(customer)
+                    queue.append(customer)
+
+    # ── upstream ────────────────────────────────
+    queue, visited = list(epicenters), set(epicenters)
+    while queue:
+        node = queue.pop(0)
+        node_risk = scores[node]
+        if node_risk < 0.04:
+            continue
+        for supplier in G.predecessors(node):
+            prop = node_risk * DECAY_UP * rng.uniform(0.6, 1.0)
+            prop = min(prop, 1.0)
+            if prop > scores[supplier]:
+                scores[supplier] = prop
+                if supplier not in visited:
+                    visited.add(supplier)
+                    queue.append(supplier)
+
+    return scores
+
+
+def monte_carlo(
+    G: nx.DiGraph,
+    epicenters: List[str],
+    intensity: float,
+    n: int = 500,
+) -> Dict[str, Dict]:
+    """Run n BFS iterations with perturbed intensity, return per-node statistics."""
+    per_node: Dict[str, list] = {node: [] for node in G.nodes}
+    rng = np.random.default_rng(42)
+
+    for _ in range(n):
+        perturbed = float(np.clip(intensity * rng.uniform(0.80, 1.20), 0, 1))
+        scores = bfs_propagate(G, epicenters, perturbed, rng)
+        for node, score in scores.items():
+            per_node[node].append(score)
+
+    stats = {}
+    for node, samples in per_node.items():
+        arr = np.array(samples)
+        stats[node] = {
+            "mean": float(arr.mean()),
+            "std":  float(arr.std()),
+            "p5":   float(np.percentile(arr, 5)),
+            "p50":  float(np.percentile(arr, 50)),
+            "p95":  float(np.percentile(arr, 95)),
+        }
+    return stats
+
+
+# ── GNN inference (optional) ──────────────────────────────────────────────────
+
+def gnn_predict(
+    epicenters: List[str],
+    intensity: float,
+) -> Optional[Dict[str, float]]:
+    """Run trained GNN if available. Returns None if not possible."""
+    if not TORCH_AVAILABLE or state["gnn_model"] is None:
+        return None
+    try:
+        model   = state["gnn_model"]
+        data    = state["gnn_data"]
+        c2i     = state["company_to_idx"]
+        i2c     = state["idx_to_company"]
+        device  = state["device"]
+
+        x          = data.x.clone().to(device)
+        edge_index = data.edge_index.to(device)
+
+        shock = torch.zeros(x.shape[0], 1).to(device)
+        for company in epicenters:
+            if company in c2i:
+                shock[c2i[company]] = intensity
+
+        x_aug = torch.cat([x, shock], dim=1)
+
+        with torch.no_grad():
+            raw = model(x_aug, edge_index)
+
+        return {i2c[i]: float(raw[i].cpu().item()) for i in i2c}
+    except Exception as exc:
+        print(f"[GNN] inference failed: {exc}")
+        return None
+
+
+# ── Risk categorisation ───────────────────────────────────────────────────────
+
+def categorise(score: float) -> str:
+    if score > 0.70: return "critical"
+    if score > 0.50: return "high"
+    if score > 0.30: return "moderate"
+    return "low"
+
+
+# ── Startup ───────────────────────────────────────────────────────────────────
 
 @app.on_event("startup")
-async def load_model():
-    """Load model and data on startup"""
+async def startup():
+    # 1. Load graph
     try:
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
-        # Load graph data
-        data = torch.load('/home/claude/models/graph_data.pt', map_location=device)
-        
-        # Load mappings
-        with open('/home/claude/models/company_mappings.pkl', 'rb') as f:
-            mappings = pickle.load(f)
-        
-        # Initialize model
-        model = SupplyChainGNN(
-            input_dim=data.x.shape[1] + 1,
-            hidden_dim=64,
-            num_layers=3,
-            dropout=0.2,
-            heads=4
-        )
-        
-        # Load weights
-        checkpoint = torch.load('/home/claude/models/supply_chain_gnn.pt', map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model.to(device)
-        model.eval()
-        
-        # Initialize market data fetcher
-        fetcher = MarketDataFetcher()
-        
-        # Store in global state
-        model_state['model'] = model
-        model_state['data'] = data
-        model_state['mappings'] = mappings
-        model_state['fetcher'] = fetcher
-        model_state['device'] = device
-        
-        print("✓ Model loaded successfully")
-        print(f"✓ Running on {device}")
-        print(f"✓ Tracking {len(mappings['company_to_idx'])} companies")
-        
+        G = load_graph(CONNECTIONS_PATH)
+        state["graph"] = G
+        companies = list(G.nodes)
+        state["company_to_idx"] = {c: i for i, c in enumerate(companies)}
+        state["idx_to_company"] = {i: c for i, c in enumerate(companies)}
+        print(f"[startup] Graph loaded: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
     except Exception as e:
-        print(f"✗ Error loading model: {e}")
-        # Continue with demo mode
+        print(f"[startup] Graph load failed: {e}")
+
+    # 2. Try loading GNN weights
+    if TORCH_AVAILABLE:
+        try:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            state["device"] = device
+
+            data = torch.load(os.path.join(MODEL_DIR, "graph_data.pt"),    map_location=device)
+            with open(os.path.join(MODEL_DIR, "company_mappings.pkl"), "rb") as f:
+                mappings = pickle.load(f)
+
+            model = SupplyChainGNN(
+                input_dim=data.x.shape[1] + 1,
+                hidden_dim=64, num_layers=3, dropout=0.2, heads=4,
+            )
+            ckpt = torch.load(os.path.join(MODEL_DIR, "supply_chain_gnn.pt"), map_location=device)
+            model.load_state_dict(ckpt["model_state_dict"])
+            model.to(device).eval()
+
+            state["gnn_model"]       = model
+            state["gnn_data"]        = data
+            state["company_to_idx"]  = mappings["company_to_idx"]
+            state["idx_to_company"]  = mappings["idx_to_company"]
+            print("[startup] GNN model loaded ✓")
+        except FileNotFoundError:
+            print("[startup] GNN weights not found — using BFS fallback")
+        except Exception as e:
+            print(f"[startup] GNN load error: {e}")
 
 
-@app.get("/")
-async def root():
-    """Root endpoint"""
-    return {
-        "message": "Supply Chain Risk Analyzer API",
-        "status": "operational" if model_state['model'] is not None else "demo_mode",
-        "version": "1.0.0",
-        "endpoints": {
-            "predict": "/api/predict",
-            "scenarios": "/api/scenarios",
-            "companies": "/api/companies",
-            "market": "/api/market"
-        }
-    }
-
+# ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
-async def health_check():
-    """Health check endpoint"""
+def health():
     return {
-        "status": "healthy",
-        "model_loaded": model_state['model'] is not None,
-        "device": str(model_state['device']) if model_state['device'] else "none",
-        "timestamp": datetime.now().isoformat()
+        "status":       "healthy",
+        "graph_loaded": state["graph"] is not None,
+        "gnn_loaded":   state["gnn_model"] is not None,
+        "nodes":        state["graph"].number_of_nodes() if state["graph"] else 0,
+        "edges":        state["graph"].number_of_edges() if state["graph"] else 0,
+        "timestamp":    datetime.now().isoformat(),
     }
 
 
 @app.post("/api/predict", response_model=ScenarioResult)
-async def predict_risk(scenario: ShockScenario):
-    """
-    Predict supply chain risk for a shock scenario
-    
-    Args:
-        scenario: Shock scenario details
-    
-    Returns:
-        Risk predictions for all companies
-    """
-    if model_state['model'] is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
-    
-    try:
-        # Extract model components
-        model = model_state['model']
-        data = model_state['data']
-        company_to_idx = model_state['mappings']['company_to_idx']
-        idx_to_company = model_state['mappings']['idx_to_company']
-        device = model_state['device']
-        
-        # Prepare features
-        x = data.x.clone().to(device)
-        edge_index = data.edge_index.to(device)
-        
-        # Add shock feature
-        shock_feature = torch.zeros(x.shape[0], 1).to(device)
-        for company in scenario.affected_companies:
-            if company in company_to_idx:
-                idx = company_to_idx[company]
-                shock_feature[idx] = scenario.intensity
-        
-        # Augment features
-        x_augmented = torch.cat([x, shock_feature], dim=1)
-        
-        # Predict
-        with torch.no_grad():
-            risk_scores = model(x_augmented, edge_index)
-        
-        # Build response
-        predictions = []
-        risk_counts = {'critical': 0, 'high': 0, 'moderate': 0, 'low': 0}
-        
-        for idx, company in idx_to_company.items():
-            risk = float(risk_scores[idx].cpu().item())
-            
-            # Categorize risk
-            if risk > 0.7:
-                level = 'critical'
-                risk_counts['critical'] += 1
-            elif risk > 0.5:
-                level = 'high'
-                risk_counts['high'] += 1
-            elif risk > 0.3:
-                level = 'moderate'
-                risk_counts['moderate'] += 1
-            else:
-                level = 'low'
-                risk_counts['low'] += 1
-            
-            predictions.append(RiskPrediction(
-                company=company,
-                risk_score=round(risk, 4),
-                risk_level=level,
-                ticker=CompanyTickerMapper.get_ticker(company),
-                is_epicenter=company in scenario.affected_companies
-            ))
-        
-        # Sort by risk score
-        predictions.sort(key=lambda x: x.risk_score, reverse=True)
-        
-        return ScenarioResult(
-            scenario_name=scenario.scenario_name or "Custom Scenario",
-            affected_companies=scenario.affected_companies,
-            intensity=scenario.intensity,
-            timestamp=datetime.now().isoformat(),
-            predictions=predictions,
-            summary=risk_counts
+def predict(scenario: ShockScenario):
+    G = state["graph"]
+    if G is None:
+        raise HTTPException(503, "Graph not loaded")
+
+    # Try GNN first, fall back to BFS
+    gnn_scores = gnn_predict(scenario.affected_companies, scenario.intensity)
+    if gnn_scores:
+        scores        = gnn_scores
+        inference_mode = "gnn"
+    else:
+        scores        = bfs_propagate(G, scenario.affected_companies, scenario.intensity)
+        inference_mode = "bfs"
+
+    # Optional Monte Carlo
+    mc_stats: Optional[Dict] = None
+    if scenario.monte_carlo_n > 0:
+        mc_stats = monte_carlo(G, scenario.affected_companies, scenario.intensity, scenario.monte_carlo_n)
+
+    # Build response
+    predictions, counts = [], {"critical":0,"high":0,"moderate":0,"low":0}
+    for company, score in sorted(scores.items(), key=lambda x: -x[1]):
+        level = categorise(score)
+        counts[level] += 1
+        node = NodeRisk(
+            company     = company,
+            risk_score  = round(score, 4),
+            risk_level  = level,
+            is_epicenter= company in scenario.affected_companies,
         )
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
+        if mc_stats and company in mc_stats:
+            s = mc_stats[company]
+            node.p5  = round(s["p5"],  4)
+            node.p50 = round(s["p50"], 4)
+            node.p95 = round(s["p95"], 4)
+            node.std = round(s["std"],  4)
+        predictions.append(node)
+
+    return ScenarioResult(
+        scenario_name      = scenario.scenario_name or "Custom",
+        affected_companies = scenario.affected_companies,
+        intensity          = scenario.intensity,
+        inference_mode     = inference_mode,
+        timestamp          = datetime.now().isoformat(),
+        predictions        = predictions,
+        summary            = counts,
+    )
 
 
 @app.get("/api/scenarios")
-async def list_scenarios():
-    """List all predefined crisis scenarios"""
-    scenarios = [
-        CrisisScenarios.taiwan_earthquake(),
-        CrisisScenarios.lithium_shortage(),
-        CrisisScenarios.nvidia_supply_constraint(),
-        CrisisScenarios.china_export_restrictions(),
-        CrisisScenarios.energy_crisis()
-    ]
-    
+def list_scenarios():
+    return {"scenarios": [
+        {"name":"Taiwan Earthquake",       "affected":["TSMC"],                         "intensity":0.90,"category":"Natural Disaster"},
+        {"name":"Lithium Supply Shock",    "affected":["Panasonic","LG","CATL","Samsung"],"intensity":0.80,"category":"Resource"},
+        {"name":"AI Chip Shortage",        "affected":["Nvidia"],                        "intensity":0.70,"category":"Demand Shock"},
+        {"name":"Rare Earth Export Ban",   "affected":["ASML","Samsung","SK_Hynix"],     "intensity":0.85,"category":"Geopolitical"},
+        {"name":"Energy Supply Crisis",    "affected":["Samsung","TSMC","Intel","ASML"], "intensity":0.75,"category":"Energy"},
+        {"name":"Port Disruption",         "affected":["Foxconn","Samsung","TSMC","Sony"],"intensity":0.65,"category":"Logistics"},
+    ]}
+
+
+@app.get("/api/graph")
+def graph_info():
+    G = state["graph"]
+    if G is None:
+        raise HTTPException(503, "Graph not loaded")
+    pr = nx.pagerank(G)
+    bc = nx.betweenness_centrality(G)
     return {
-        "scenarios": scenarios,
-        "count": len(scenarios)
+        "nodes": [
+            {
+                "company":      n,
+                "in_degree":    G.in_degree(n),
+                "out_degree":   G.out_degree(n),
+                "pagerank":     round(pr[n], 5),
+                "betweenness":  round(bc[n], 5),
+            }
+            for n in sorted(G.nodes, key=lambda x: -pr[x])
+        ],
+        "edge_count": G.number_of_edges(),
     }
 
 
 @app.get("/api/companies")
-async def list_companies():
-    """List all companies in the network"""
-    if model_state['mappings'] is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
-    
-    idx_to_company = model_state['mappings']['idx_to_company']
-    
-    companies = []
-    for company in idx_to_company.values():
-        companies.append({
-            'name': company,
-            'ticker': CompanyTickerMapper.get_ticker(company)
-        })
-    
-    return {
-        "companies": sorted(companies, key=lambda x: x['name']),
-        "count": len(companies)
-    }
-
-
-@app.get("/api/companies/{company_name}", response_model=CompanyInfo)
-async def get_company_info(company_name: str):
-    """
-    Get detailed information about a specific company
-    
-    Args:
-        company_name: Name of the company
-    
-    Returns:
-        Company information including suppliers and customers
-    """
-    if model_state['data'] is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
-    
-    # In production, load the graph and compute neighbors
-    # For now, return mock data
-    return CompanyInfo(
-        name=company_name,
-        ticker=CompanyTickerMapper.get_ticker(company_name),
-        suppliers=['Supplier1', 'Supplier2'],
-        customers=['Customer1', 'Customer2'],
-        centrality_metrics={
-            'pagerank': 0.05,
-            'betweenness': 0.12,
-            'degree': 8
-        }
-    )
-
-
-@app.get("/api/market/prices")
-async def get_market_prices(tickers: Optional[str] = None):
-    """
-    Get current market prices for companies
-    
-    Args:
-        tickers: Comma-separated list of tickers (optional)
-    
-    Returns:
-        Current price data
-    """
-    fetcher = model_state.get('fetcher') or MarketDataFetcher()
-    
-    if tickers:
-        ticker_list = tickers.split(',')
-    else:
-        ticker_list = ['NVDA', 'AAPL', 'TSLA', 'MSFT', 'AMD']
-    
-    prices = fetcher.get_multiple_prices(ticker_list)
-    return prices.to_dict(orient='records')
-
-
-@app.get("/api/market/shocks")
-async def detect_market_shocks(threshold: float = 0.05):
-    """
-    Detect recent significant market movements
-    
-    Args:
-        threshold: Minimum change threshold (default 5%)
-    
-    Returns:
-        List of detected shocks
-    """
-    fetcher = model_state.get('fetcher') or MarketDataFetcher()
-    
-    all_tickers = CompanyTickerMapper.get_all_tickers()[:20]  # Limit for performance
-    shocks = fetcher.detect_recent_shocks(all_tickers, threshold)
-    
-    return {
-        "shocks": shocks,
-        "count": len(shocks),
-        "threshold": threshold,
-        "timestamp": datetime.now().isoformat()
-    }
-
-
-@app.get("/api/market/news")
-async def get_supply_chain_news(days: int = 7):
-    """
-    Get recent supply chain news
-    
-    Args:
-        days: Number of days to look back
-    
-    Returns:
-        Recent news articles
-    """
-    fetcher = model_state.get('fetcher') or MarketDataFetcher()
-    
-    companies = ['Nvidia', 'TSMC', 'Apple', 'Tesla', 'Samsung']
-    news = fetcher.get_supply_chain_news(companies, days)
-    
-    return {
-        "news": news,
-        "count": len(news),
-        "days_back": days
-    }
+def companies():
+    G = state["graph"]
+    if G is None:
+        raise HTTPException(503, "Graph not loaded")
+    return {"companies": sorted(G.nodes), "count": G.number_of_nodes()}
 
 
 if __name__ == "__main__":
-    uvicorn.run(
-        "api_server:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
+    import uvicorn
+    uvicorn.run("api_server:app", host="0.0.0.0", port=8000, reload=True)

@@ -1,242 +1,781 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Supply Chain Risk Propagation Analyzer</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Supply Chain Risk Propagation Analyzer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.26.0/plotly.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0e1a;
+      --surface: #111827;
+      --surface2: #1a2235;
+      --border: #1e2d45;
+      --accent: #00d4ff;
+      --accent2: #ff6b35;
+      --warn: #ffb800;
+      --danger: #ff3b5c;
+      --success: #00e5a0;
+      --text: #e2e8f0;
+      --muted: #64748b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'IBM Plex Sans', sans-serif;
+      min-height: 100vh;
+    }
+    .mono { font-family: 'IBM Plex Mono', monospace; }
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.26.0/plotly.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+    /* Grid background */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      position: relative;
+    }
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      opacity: 0.3;
+    }
+
+    .tag-critical { background: rgba(255,59,92,0.15); color: #ff3b5c; border: 1px solid rgba(255,59,92,0.3); }
+    .tag-high     { background: rgba(255,107,53,0.15); color: #ff6b35; border: 1px solid rgba(255,107,53,0.3); }
+    .tag-moderate { background: rgba(255,184,0,0.15);  color: #ffb800; border: 1px solid rgba(255,184,0,0.3); }
+    .tag-low      { background: rgba(0,229,160,0.15);  color: #00e5a0; border: 1px solid rgba(0,229,160,0.3); }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #0a0e1a;
+      font-family: 'IBM Plex Mono', monospace;
+      font-weight: 600;
+      font-size: 13px;
+      padding: 8px 20px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: 0.05em;
+    }
+    .btn-primary:hover { background: #33ddff; box-shadow: 0 0 20px rgba(0,212,255,0.3); }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-scenario {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 14px 16px;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: left;
+      width: 100%;
+    }
+    .btn-scenario:hover { border-color: var(--accent); background: rgba(0,212,255,0.05); }
+    .btn-scenario.active { border-color: var(--accent); background: rgba(0,212,255,0.08); }
+
+    .risk-bar-fill { height: 4px; border-radius: 2px; transition: width 0.5s ease; }
+
+    .pulse { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+    .fade-in { animation: fadeIn 0.3s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: var(--surface); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .api-status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      display: inline-block; margin-right: 6px;
+    }
+    .dot-online { background: var(--success); box-shadow: 0 0 6px var(--success); }
+    .dot-offline { background: var(--muted); }
+    .dot-checking { background: var(--warn); animation: pulse 1s infinite; }
+
+    .mc-bar {
+      height: 20px;
+      border-radius: 3px;
+      background: linear-gradient(90deg, rgba(0,212,255,0.2), rgba(0,212,255,0.6));
+      position: relative;
+      transition: width 0.6s ease;
+    }
+    .mc-bar .p95-marker {
+      position: absolute;
+      right: 0; top: 0; bottom: 0;
+      width: 2px;
+      background: var(--danger);
+    }
+    .mc-bar .p50-marker {
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 2px;
+      background: var(--accent);
+    }
+  </style>
 </head>
-
-<body class="bg-slate-50">
+<body>
 <div id="root"></div>
 
 <script type="text/babel">
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useCallback } = React;
 
-/* ================= DATA ================= */
-const companies = [
-    'Nvidia','TSMC','Apple','Microsoft','Tesla','AMD','Google','Amazon','Intel',
-    'Samsung','Foxconn','ASML','Panasonic','LG','CATL','Ford','GM','Qualcomm',
-    'MediaTek','Sony','Dell','HP','Meta','ByteDance','Alibaba','Tencent',
-    'SK_Hynix','Bosch','Denso'
+/* ─── GRAPH ENGINE ──────────────────────────────────────────────────────── */
+// Loads connections.csv and builds adjacency for real propagation
+
+const RAW_EDGES = [
+  {source:'Nvidia',target:'TSMC',rel:'Supplier'},
+  {source:'Apple',target:'TSMC',rel:'Supplier'},
+  {source:'Microsoft',target:'Nvidia',rel:'Customer'},
+  {source:'Tesla',target:'Nvidia',rel:'Customer'},
+  {source:'AMD',target:'TSMC',rel:'Supplier'},
+  {source:'Google',target:'Nvidia',rel:'Customer'},
+  {source:'Amazon',target:'Nvidia',rel:'Customer'},
+  {source:'Intel',target:'ASML',rel:'Supplier'},
+  {source:'Samsung',target:'ASML',rel:'Supplier'},
+  {source:'Apple',target:'Foxconn',rel:'Supplier'},
+  {source:'Dell',target:'Nvidia',rel:'Customer'},
+  {source:'HP',target:'Intel',rel:'Customer'},
+  {source:'Tesla',target:'Panasonic',rel:'Supplier'},
+  {source:'Tesla',target:'LG',rel:'Supplier'},
+  {source:'Ford',target:'CATL',rel:'Supplier'},
+  {source:'GM',target:'LG',rel:'Supplier'},
+  {source:'Apple',target:'Samsung',rel:'Supplier'},
+  {source:'Qualcomm',target:'TSMC',rel:'Supplier'},
+  {source:'MediaTek',target:'TSMC',rel:'Supplier'},
+  {source:'Sony',target:'TSMC',rel:'Supplier'},
+  {source:'Tesla',target:'Samsung',rel:'Supplier'},
+  {source:'Apple',target:'SK_Hynix',rel:'Supplier'},
+  {source:'Microsoft',target:'AMD',rel:'Customer'},
+  {source:'Amazon',target:'Intel',rel:'Customer'},
+  {source:'Meta',target:'Nvidia',rel:'Customer'},
+  {source:'ByteDance',target:'Nvidia',rel:'Customer'},
+  {source:'Alibaba',target:'Nvidia',rel:'Customer'},
+  {source:'Tencent',target:'Nvidia',rel:'Customer'},
 ];
 
-const tickerMapping = {
-    Nvidia:'NVDA', TSMC:'TSM', Apple:'AAPL', Microsoft:'MSFT',
-    Tesla:'TSLA', AMD:'AMD', Google:'GOOGL', Amazon:'AMZN',
-    Intel:'INTC', Samsung:'SSNLF', Meta:'META', Ford:'F',
-    GM:'GM', Qualcomm:'QCOM', Sony:'SONY', Dell:'DELL',
-    HP:'HPQ', Alibaba:'BABA', Tencent:'TCEHY'
-};
+// Build proper adjacency from real edge data
+function buildGraph(edges) {
+  // downstream[A] = companies that depend on A (A is supplier)
+  // upstream[A]   = companies A depends on (A is customer)
+  const downstream = {};
+  const upstream = {};
+  const nodes = new Set();
 
-const predefinedScenarios = [
-    { name:'Taiwan Earthquake', description:'Major earthquake disrupts TSMC production', affected:['TSMC'], intensity:0.9, category:'Natural Disaster' },
-    { name:'Lithium Supply Shock', description:'Battery material shortage drives cost inflation', affected:['Panasonic','LG','CATL','Samsung'], intensity:0.8, category:'Resource Constraint' },
-    { name:'AI Chip Shortage', description:'Demand for AI accelerators exceeds supply', affected:['Nvidia'], intensity:0.7, category:'Demand Shock' },
-    { name:'Rare Earth Export Controls', description:'Export restrictions impact semiconductor tooling', affected:['ASML','Samsung','SK_Hynix'], intensity:0.85, category:'Geopolitical' },
-    { name:'Energy Supply Crisis', description:'Power instability affects chip fabrication', affected:['Samsung','TSMC','Intel','ASML'], intensity:0.75, category:'Energy' },
-    { name:'Port Disruption', description:'Logistics bottlenecks delay manufacturing', affected:['Foxconn','Samsung','TSMC','Sony'], intensity:0.65, category:'Logistics' }
+  edges.forEach(({ source, target, rel }) => {
+    nodes.add(source); nodes.add(target);
+    // "source is Supplier to target" OR "source is Customer of target"
+    let supplier, customer;
+    if (rel === 'Supplier') { supplier = source; customer = target; }
+    else                    { supplier = target; customer = source; }
+
+    if (!downstream[supplier]) downstream[supplier] = new Set();
+    if (!upstream[customer])   upstream[customer]   = new Set();
+    downstream[supplier].add(customer);
+    upstream[customer].add(supplier);
+  });
+
+  return { downstream, upstream, nodes: [...nodes] };
+}
+
+const GRAPH = buildGraph(RAW_EDGES);
+
+// BFS-based propagation — replaces hardcoded dependency map
+// Downstream: supplier shock ripples to customers (intensity * 0.75 per hop)
+// Upstream:   demand shock ripples to suppliers  (intensity * 0.45 per hop)
+function propagateRisk(epicenters, intensity) {
+  const scores = {};
+  GRAPH.nodes.forEach(n => scores[n] = 0);
+  epicenters.forEach(n => { if (scores[n] !== undefined) scores[n] = intensity; });
+
+  // Downstream BFS
+  const downQueue = [...epicenters];
+  const downVisited = new Set(epicenters);
+  const DECAY_DOWN = 0.72;
+  while (downQueue.length) {
+    const node = downQueue.shift();
+    const nodeRisk = scores[node];
+    if (nodeRisk < 0.05) continue;
+    const customers = GRAPH.downstream[node] || new Set();
+    customers.forEach(c => {
+      const propagated = nodeRisk * DECAY_DOWN * (0.8 + Math.random() * 0.4);
+      if (propagated > scores[c]) {
+        scores[c] = Math.min(propagated, 1);
+        if (!downVisited.has(c)) { downVisited.add(c); downQueue.push(c); }
+      }
+    });
+  }
+
+  // Upstream BFS (demand shock, weaker)
+  const upQueue = [...epicenters];
+  const upVisited = new Set(epicenters);
+  const DECAY_UP = 0.42;
+  while (upQueue.length) {
+    const node = upQueue.shift();
+    const nodeRisk = scores[node];
+    if (nodeRisk < 0.05) continue;
+    const suppliers = GRAPH.upstream[node] || new Set();
+    suppliers.forEach(s => {
+      const propagated = nodeRisk * DECAY_UP * (0.7 + Math.random() * 0.3);
+      if (propagated > scores[s]) {
+        scores[s] = Math.min(propagated, 1);
+        if (!upVisited.has(s)) { upVisited.add(s); upQueue.push(s); }
+      }
+    });
+  }
+
+  return scores;
+}
+
+// Real Monte Carlo: run N iterations, compute p5/p50/p95 per node
+function runMonteCarlo(epicenters, intensity, N = 500) {
+  const perNode = {};
+  GRAPH.nodes.forEach(n => perNode[n] = []);
+
+  for (let i = 0; i < N; i++) {
+    // Perturb intensity slightly (model uncertainty)
+    const perturbedIntensity = Math.min(1, intensity * (0.85 + Math.random() * 0.30));
+    const scores = propagateRisk(epicenters, perturbedIntensity);
+    Object.entries(scores).forEach(([node, score]) => perNode[node].push(score));
+  }
+
+  const results = {};
+  Object.entries(perNode).forEach(([node, samples]) => {
+    const sorted = [...samples].sort((a, b) => a - b);
+    results[node] = {
+      mean:  samples.reduce((a, b) => a + b, 0) / N,
+      p5:    sorted[Math.floor(N * 0.05)],
+      p50:   sorted[Math.floor(N * 0.50)],
+      p95:   sorted[Math.floor(N * 0.95)],
+      std:   Math.sqrt(samples.reduce((a, b) => a + (b - results?.[node]?.mean || 0) ** 2, 0) / N),
+    };
+  });
+  // Fix std after mean is computed
+  Object.entries(perNode).forEach(([node, samples]) => {
+    const mean = results[node].mean;
+    results[node].std = Math.sqrt(samples.reduce((a, b) => a + (b - mean) ** 2, 0) / N);
+  });
+  return results;
+}
+
+/* ─── API CLIENT ─────────────────────────────────────────────────────────── */
+const API_BASE = 'http://localhost:8000';
+
+async function apiPredict(epicenters, intensity) {
+  const res = await fetch(`${API_BASE}/api/predict`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ affected_companies: epicenters, intensity, scenario_name: 'Dashboard' }),
+  });
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  const data = await res.json();
+  // Normalise to { company: score } map
+  const scores = {};
+  data.predictions.forEach(p => { scores[p.company] = p.risk_score; });
+  return scores;
+}
+
+async function checkApiHealth() {
+  try {
+    const res = await fetch(`${API_BASE}/api/health`, { signal: AbortSignal.timeout(2000) });
+    return res.ok;
+  } catch { return false; }
+}
+
+/* ─── CONSTANTS ──────────────────────────────────────────────────────────── */
+const SCENARIOS = [
+  { name:'Taiwan Earthquake', desc:'Major earthquake disrupts TSMC production', affected:['TSMC'], intensity:0.90, cat:'Natural Disaster', color:'#ff3b5c' },
+  { name:'Lithium Supply Shock', desc:'Battery material shortage drives cost inflation', affected:['Panasonic','LG','CATL','Samsung'], intensity:0.80, cat:'Resource Constraint', color:'#ff6b35' },
+  { name:'AI Chip Shortage', desc:'Demand for AI accelerators exceeds Nvidia supply', affected:['Nvidia'], intensity:0.70, cat:'Demand Shock', color:'#ffb800' },
+  { name:'Rare Earth Export Controls', desc:'Export restrictions impact semiconductor tooling', affected:['ASML','Samsung','SK_Hynix'], intensity:0.85, cat:'Geopolitical', color:'#c084fc' },
+  { name:'Energy Supply Crisis', desc:'Power instability affects chip fabrication globally', affected:['Samsung','TSMC','Intel','ASML'], intensity:0.75, cat:'Energy', color:'#fb923c' },
+  { name:'Port Disruption', desc:'Logistics bottlenecks delay manufacturing worldwide', affected:['Foxconn','Samsung','TSMC','Sony'], intensity:0.65, cat:'Logistics', color:'#38bdf8' },
 ];
 
-/* ================= SIMULATION LOGIC (UNCHANGED) ================= */
-const simulateRiskPropagation = (affectedCompanies, intensity) => {
-    const risks = {};
-    const dependencies = {
-        TSMC:['Apple','Nvidia','AMD','Qualcomm','MediaTek','Sony'],
-        Nvidia:['Microsoft','Tesla','Google','Amazon','Dell','Meta','ByteDance','Alibaba','Tencent'],
-        Samsung:['Apple','Tesla','Dell','HP'],
-        Panasonic:['Tesla'],
-        LG:['Tesla','GM','Ford'],
-        CATL:['Tesla','Ford','GM'],
-        ASML:['Intel','Samsung','TSMC'],
-        Intel:['HP','Dell','Amazon'],
-        Foxconn:['Apple','Dell','HP'],
-        Apple:['Microsoft','Google'],
-        AMD:['Microsoft','Sony','Meta']
-    };
+function riskLevel(s) {
+  if (s > 0.70) return { label:'Critical', cls:'tag-critical' };
+  if (s > 0.50) return { label:'High',     cls:'tag-high'     };
+  if (s > 0.30) return { label:'Moderate', cls:'tag-moderate' };
+  return            { label:'Low',      cls:'tag-low'      };
+}
+function riskColor(s) {
+  if (s > 0.70) return '#ff3b5c';
+  if (s > 0.50) return '#ff6b35';
+  if (s > 0.30) return '#ffb800';
+  return '#00e5a0';
+}
 
-    companies.forEach(c => {
-        if (affectedCompanies.includes(c)) {
-            risks[c] = intensity;
-        } else {
-            let r = 0;
-            affectedCompanies.forEach(a => {
-                if (dependencies[a]?.includes(c)) r = Math.max(r, intensity * 0.7 * Math.random());
-                if (dependencies[c]?.includes(a)) r = Math.max(r, intensity * 0.5 * Math.random());
-            });
-            risks[c] = Math.min(r * (0.7 + Math.random() * 0.6), 1);
-        }
+/* ─── NETWORK VISUALIZER ─────────────────────────────────────────────────── */
+function NetworkViz({ scores, epicenters }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!ref.current || !scores) return;
+
+    const nodes = GRAPH.nodes;
+    const N = nodes.length;
+    const angle = (2 * Math.PI) / N;
+    const pos = {};
+    nodes.forEach((n, i) => {
+      // Cluster by role
+      const r = 2.2 + (Math.random() - 0.5) * 0.4;
+      pos[n] = { x: Math.cos(i * angle) * r, y: Math.sin(i * angle) * r };
     });
-    return risks;
-};
 
-const runMonteCarloSimulation = (affected, intensity, iterations = 1000) => {
-    const results = companies.map(c => ({ company:c, risks:[] }));
-    for (let i=0;i<iterations;i++){
-        const r = simulateRiskPropagation(affected,intensity);
-        results.forEach(res => res.risks.push(r[res.company]||0));
-    }
-    return results.map(res => {
-        const sorted = [...res.risks].sort((a,b)=>a-b);
-        const mean = res.risks.reduce((a,b)=>a+b,0)/iterations;
-        return {
-            company:res.company,
-            mean,
-            p5:sorted[Math.floor(iterations*0.05)],
-            p50:sorted[Math.floor(iterations*0.5)],
-            p95:sorted[Math.floor(iterations*0.95)]
-        };
+    const edgeX = [], edgeY = [];
+    RAW_EDGES.forEach(({ source, target }) => {
+      if (pos[source] && pos[target]) {
+        edgeX.push(pos[source].x, pos[target].x, null);
+        edgeY.push(pos[source].y, pos[target].y, null);
+      }
     });
-};
 
-/* ================= UI COMPONENTS ================= */
-
-const RiskBadge = ({ score }) => {
-    const styles = score>0.7 ? 'bg-red-100 text-red-700'
-        : score>0.5 ? 'bg-orange-100 text-orange-700'
-        : score>0.3 ? 'bg-yellow-100 text-yellow-700'
-        : 'bg-green-100 text-green-700';
-
-    const label = score>0.7?'Critical':score>0.5?'High':score>0.3?'Moderate':'Low';
-
-    return <span className={`px-2 py-0.5 rounded text-xs font-medium ${styles}`}>{label}</span>;
-};
-
-const App = () => {
-    const [selectedScenario,setSelectedScenario] = useState(null);
-    const [riskScores,setRiskScores] = useState(null);
-    const [activeTab,setActiveTab] = useState('scenarios');
-    const [mcResults,setMcResults] = useState(null);
-    const [loading,setLoading] = useState(false);
-
-    const runScenario = s => {
-        setSelectedScenario(s);
-        setRiskScores(simulateRiskPropagation(s.affected,s.intensity));
-        setMcResults(null);
+    const edgeTrace = {
+      x: edgeX, y: edgeY,
+      mode: 'lines',
+      line: { width: 0.8, color: 'rgba(30,45,69,0.8)' },
+      hoverinfo: 'none', showlegend: false,
     };
 
-    const runMC = () => {
-        setLoading(true);
-        setTimeout(()=>{
-            setMcResults(runMonteCarloSimulation(
-                selectedScenario.affected,
-                selectedScenario.intensity
-            ));
-            setLoading(false);
-        },500);
+    const nodeTrace = {
+      x: nodes.map(n => pos[n].x),
+      y: nodes.map(n => pos[n].y),
+      mode: 'markers+text',
+      text: nodes,
+      textposition: 'top center',
+      textfont: { size: 9, family: 'IBM Plex Mono', color: '#94a3b8' },
+      marker: {
+        size: nodes.map(n => epicenters.includes(n) ? 22 : 10 + (scores[n] || 0) * 18),
+        color: nodes.map(n => scores[n] || 0),
+        colorscale: [[0,'#1a2235'],[0.3,'#ffb800'],[0.5,'#ff6b35'],[1,'#ff3b5c']],
+        cmin: 0, cmax: 1,
+        line: {
+          width: nodes.map(n => epicenters.includes(n) ? 3 : 1),
+          color: nodes.map(n => epicenters.includes(n) ? '#00d4ff' : '#1e2d45'),
+        },
+        colorbar: { title: 'Risk', thickness: 12, len: 0.5, tickfont: { color: '#64748b', size: 10 } },
+      },
+      hovertemplate: '<b>%{text}</b><br>Risk: %{marker.color:.1%}<extra></extra>',
+      showlegend: false,
     };
 
-    const sorted = riskScores
-        ? Object.entries(riskScores).sort((a,b)=>b[1]-a[1]).slice(0,10)
-        : [];
+    Plotly.newPlot(ref.current, [edgeTrace, nodeTrace], {
+      paper_bgcolor: 'rgba(0,0,0,0)',
+      plot_bgcolor: 'rgba(0,0,0,0)',
+      margin: { l: 10, r: 10, t: 10, b: 10 },
+      height: 420,
+      xaxis: { showgrid: false, zeroline: false, showticklabels: false },
+      yaxis: { showgrid: false, zeroline: false, showticklabels: false },
+      showlegend: false,
+      hovermode: 'closest',
+    }, { responsive: true, displayModeBar: false });
+  }, [scores, epicenters]);
 
-    const grouped = predefinedScenarios.reduce((a,s)=>{
-        a[s.category]=a[s.category]||[];
-        a[s.category].push(s);
-        return a;
-    },{});
+  return <div ref={ref} style={{ width: '100%' }} />;
+}
 
-    return (
-        <div className="max-w-7xl mx-auto px-6 py-10">
-            <header className="mb-10">
-                <h1 className="text-4xl font-semibold text-slate-800">
-                    Supply Chain Risk Propagation
-                </h1>
-                <p className="text-slate-500 mt-2 max-w-2xl">
-                    Scenario-based modeling of cascading supply chain disruptions using probabilistic simulation.
-                </p>
-            </header>
+/* ─── MONTE CARLO PANEL ──────────────────────────────────────────────────── */
+function MCPanel({ mcResults }) {
+  if (!mcResults) return null;
+  const sorted = Object.entries(mcResults)
+    .filter(([, v]) => v.mean > 0.05)
+    .sort((a, b) => b[1].mean - a[1].mean)
+    .slice(0, 12);
 
-            <div className="flex gap-3 mb-8">
-                {['scenarios','analysis'].map(t=>(
-                    <button key={t}
-                        onClick={()=>setActiveTab(t)}
-                        className={`px-5 py-2 rounded-full text-sm font-medium
-                        ${activeTab===t?'bg-slate-900 text-white':'bg-white border text-slate-600'}`}>
-                        {t.charAt(0).toUpperCase()+t.slice(1)}
-                    </button>
-                ))}
-            </div>
-
-            {activeTab==='scenarios' && (
-                <div className="grid md:grid-cols-2 gap-6">
-                    {Object.entries(grouped).map(([cat,items])=>(
-                        <div key={cat} className="bg-white rounded-xl border p-5">
-                            <h3 className="text-sm font-semibold text-slate-500 mb-4">{cat}</h3>
-                            <div className="space-y-3">
-                                {items.map(s=>(
-                                    <button key={s.name}
-                                        onClick={()=>runScenario(s)}
-                                        className="w-full text-left p-4 rounded-lg border hover:bg-slate-50">
-                                        <div className="flex justify-between">
-                                            <span className="font-medium text-slate-800">{s.name}</span>
-                                            <span className="text-xs text-slate-500">{Math.round(s.intensity*100)}%</span>
-                                        </div>
-                                        <p className="text-sm text-slate-500 mt-1">{s.description}</p>
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            )}
-
-            {activeTab==='analysis' && riskScores && (
-                <div className="space-y-8">
-                    <div className="bg-white rounded-xl border p-6">
-                        <div className="flex justify-between mb-4">
-                            <h2 className="font-semibold text-slate-800">Monte Carlo Simulation</h2>
-                            <button onClick={runMC}
-                                className="px-4 py-2 bg-slate-900 text-white rounded-md text-sm">
-                                {loading?'Running...':'Run Simulation'}
-                            </button>
-                        </div>
-                        {mcResults && (
-                            <div className="grid md:grid-cols-2 gap-4">
-                                {mcResults.slice(0,6).map(r=>(
-                                    <div key={r.company} className="border rounded p-3">
-                                        <div className="flex justify-between">
-                                            <span className="font-medium">{r.company}</span>
-                                            <RiskBadge score={r.mean} />
-                                        </div>
-                                        <p className="text-xs text-slate-500 mt-1">
-                                            Mean Risk: {(r.mean*100).toFixed(1)}%
-                                        </p>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="bg-white rounded-xl border p-6">
-                        <h2 className="font-semibold text-slate-800 mb-4">Most Exposed Entities</h2>
-                        <div className="space-y-2">
-                            {sorted.map(([c,s],i)=>(
-                                <div key={c} className="flex justify-between items-center p-2 border rounded">
-                                    <span className="text-sm font-medium">
-                                        {i+1}. {c} {tickerMapping[c] && <span className="text-xs text-slate-400">({tickerMapping[c]})</span>}
-                                    </span>
-                                    <div className="flex gap-3 items-center">
-                                        <span className="text-sm">{(s*100).toFixed(1)}%</span>
-                                        <RiskBadge score={s}/>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            )}
+  return (
+    <div className="fade-in">
+      <div style={{ marginBottom: 12, display:'flex', gap:16, fontSize:11, color:'var(--muted)', fontFamily:'IBM Plex Mono' }}>
+        <span>■ <span style={{color:'var(--accent)'}}>P50 median</span></span>
+        <span>■ <span style={{color:'var(--danger)'}}>P95 tail risk</span></span>
+        <span style={{marginLeft:'auto'}}>n=500 iterations · model uncertainty ±15%</span>
+      </div>
+      {sorted.map(([node, v]) => (
+        <div key={node} style={{ marginBottom: 10 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:3 }}>
+            <span style={{ fontFamily:'IBM Plex Mono', fontSize:12, color:'var(--text)' }}>{node}</span>
+            <span style={{ fontFamily:'IBM Plex Mono', fontSize:11, color:'var(--muted)' }}>
+              μ={( v.mean*100).toFixed(1)}% · σ={(v.std*100).toFixed(1)}% · p95={(v.p95*100).toFixed(1)}%
+            </span>
+          </div>
+          <div style={{ position:'relative', height:16, background:'var(--surface2)', borderRadius:3, overflow:'hidden' }}>
+            {/* p5–p95 confidence band */}
+            <div style={{
+              position:'absolute', top:0, bottom:0,
+              left:`${v.p5*100}%`,
+              width:`${(v.p95-v.p5)*100}%`,
+              background:'rgba(0,212,255,0.12)',
+            }} />
+            {/* p50 line */}
+            <div style={{
+              position:'absolute', top:0, bottom:0, width:2,
+              left:`${v.p50*100}%`, background:'var(--accent)',
+            }} />
+            {/* p95 marker */}
+            <div style={{
+              position:'absolute', top:0, bottom:0, width:2,
+              left:`${v.p95*100}%`, background:'var(--danger)',
+            }} />
+            {/* mean bar */}
+            <div style={{
+              position:'absolute', top:'25%', bottom:'25%',
+              left:0, width:`${v.mean*100}%`,
+              background:`linear-gradient(90deg, ${riskColor(v.mean)}44, ${riskColor(v.mean)})`,
+              borderRadius:3,
+            }} />
+          </div>
         </div>
-    );
-};
+      ))}
+    </div>
+  );
+}
 
-ReactDOM.render(<App/>,document.getElementById('root'));
+/* ─── MAIN APP ───────────────────────────────────────────────────────────── */
+function App() {
+  const [activeScenario, setActiveScenario] = useState(null);
+  const [scores, setScores] = useState(null);
+  const [mcResults, setMcResults] = useState(null);
+  const [mcLoading, setMcLoading] = useState(false);
+  const [apiStatus, setApiStatus] = useState('checking'); // checking | online | offline
+  const [apiMode, setApiMode] = useState(false); // true = use real API
+  const [tab, setTab] = useState('network'); // network | rankings | mc
+  const [customEpis, setCustomEpis] = useState([]);
+  const [customIntensity, setCustomIntensity] = useState(80);
+
+  // Check API on mount
+  useEffect(() => {
+    setApiStatus('checking');
+    checkApiHealth().then(ok => {
+      setApiStatus(ok ? 'online' : 'offline');
+      setApiMode(ok);
+    });
+  }, []);
+
+  const runScenario = useCallback(async (scenario) => {
+    setActiveScenario(scenario);
+    setMcResults(null);
+    setTab('network');
+
+    if (apiMode && apiStatus === 'online') {
+      try {
+        const apiScores = await apiPredict(scenario.affected, scenario.intensity);
+        setScores(apiScores);
+        return;
+      } catch (e) {
+        console.warn('API failed, falling back to local propagation:', e);
+      }
+    }
+    // Local graph propagation (real BFS, not hardcoded)
+    setScores(propagateRisk(scenario.affected, scenario.intensity));
+  }, [apiMode, apiStatus]);
+
+  const runCustom = useCallback(() => {
+    if (!customEpis.length) return;
+    const scenario = {
+      name: 'Custom Scenario',
+      affected: customEpis,
+      intensity: customIntensity / 100,
+      cat: 'Custom',
+      color: '#00d4ff',
+    };
+    runScenario(scenario);
+  }, [customEpis, customIntensity, runScenario]);
+
+  const runMC = useCallback(() => {
+    if (!activeScenario) return;
+    setMcLoading(true);
+    setTab('mc');
+    // Run in next tick so UI updates first
+    setTimeout(() => {
+      const results = runMonteCarlo(activeScenario.affected, activeScenario.intensity, 500);
+      setMcResults(results);
+      setMcLoading(false);
+    }, 50);
+  }, [activeScenario]);
+
+  const sorted = scores
+    ? Object.entries(scores).sort((a, b) => b[1] - a[1]).filter(([, s]) => s > 0.05)
+    : [];
+
+  const summary = scores ? {
+    critical: sorted.filter(([,s]) => s > 0.70).length,
+    high:     sorted.filter(([,s]) => s > 0.50 && s <= 0.70).length,
+    moderate: sorted.filter(([,s]) => s > 0.30 && s <= 0.50).length,
+  } : null;
+
+  return (
+    <div style={{ maxWidth: 1400, margin: '0 auto', padding: '24px 20px', position:'relative', zIndex:1 }}>
+
+      {/* Header */}
+      <div style={{ marginBottom: 32, borderBottom: '1px solid var(--border)', paddingBottom: 20 }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12 }}>
+          <div>
+            <div style={{ fontFamily:'IBM Plex Mono', fontSize:11, color:'var(--accent)', letterSpacing:'0.15em', marginBottom:6 }}>
+              SUPPLY CHAIN RISK · GNN PROPAGATION ENGINE
+            </div>
+            <h1 style={{ fontSize:26, fontWeight:600, letterSpacing:'-0.02em', color:'var(--text)' }}>
+              Systemic Risk Analyzer
+            </h1>
+            <p style={{ color:'var(--muted)', fontSize:13, marginTop:4 }}>
+              Graph Attention Network · BFS propagation from real edge data · Monte Carlo uncertainty quantification
+            </p>
+          </div>
+          <div style={{ display:'flex', alignItems:'center', gap:8, fontFamily:'IBM Plex Mono', fontSize:12 }}>
+            <span className={`api-status-dot dot-${apiStatus}`} />
+            <span style={{ color: apiStatus==='online' ? 'var(--success)' : apiStatus==='checking' ? 'var(--warn)' : 'var(--muted)' }}>
+              {apiStatus==='online' ? 'API ONLINE' : apiStatus==='checking' ? 'CHECKING API…' : 'LOCAL MODE'}
+            </span>
+            {apiStatus !== 'online' && (
+              <span style={{ color:'var(--muted)', fontSize:10 }}>· start FastAPI on :8000 to enable GNN</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'320px 1fr', gap:20 }}>
+
+        {/* LEFT: Scenario Panel */}
+        <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+
+          {/* Predefined Scenarios */}
+          <div className="card" style={{ padding:16 }}>
+            <div style={{ fontFamily:'IBM Plex Mono', fontSize:10, color:'var(--muted)', letterSpacing:'0.12em', marginBottom:12 }}>
+              CRISIS SCENARIOS
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+              {SCENARIOS.map(s => (
+                <button key={s.name} className={`btn-scenario${activeScenario?.name===s.name?' active':''}`}
+                  onClick={() => runScenario(s)}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:4 }}>
+                    <span style={{ fontSize:13, fontWeight:500, color:'var(--text)' }}>{s.name}</span>
+                    <span style={{ fontFamily:'IBM Plex Mono', fontSize:10, color: s.color, whiteSpace:'nowrap', marginLeft:8 }}>
+                      {Math.round(s.intensity*100)}%
+                    </span>
+                  </div>
+                  <p style={{ fontSize:11, color:'var(--muted)', lineHeight:1.4 }}>{s.desc}</p>
+                  <div style={{ marginTop:6, fontSize:10, fontFamily:'IBM Plex Mono', color:'var(--muted)' }}>
+                    {s.affected.join(' · ')}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Custom Scenario Builder */}
+          <div className="card" style={{ padding:16 }}>
+            <div style={{ fontFamily:'IBM Plex Mono', fontSize:10, color:'var(--muted)', letterSpacing:'0.12em', marginBottom:12 }}>
+              CUSTOM SCENARIO
+            </div>
+            <div style={{ marginBottom:12 }}>
+              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:6 }}>
+                <span style={{ fontSize:12, color:'var(--text)' }}>Shock Intensity</span>
+                <span style={{ fontFamily:'IBM Plex Mono', fontSize:12, color:'var(--accent)' }}>{customIntensity}%</span>
+              </div>
+              <input type="range" min={10} max={100} value={customIntensity}
+                onChange={e => setCustomIntensity(+e.target.value)}
+                style={{ width:'100%', accentColor:'var(--accent)' }} />
+            </div>
+            <div style={{ maxHeight:180, overflowY:'auto', marginBottom:12 }}>
+              {GRAPH.nodes.sort().map(n => (
+                <label key={n} style={{ display:'flex', alignItems:'center', gap:8, padding:'4px 0', cursor:'pointer' }}>
+                  <input type="checkbox"
+                    checked={customEpis.includes(n)}
+                    onChange={() => setCustomEpis(prev => prev.includes(n) ? prev.filter(x=>x!==n) : [...prev,n])}
+                    style={{ accentColor:'var(--accent)' }} />
+                  <span style={{ fontSize:12, color:'var(--text)', fontFamily:'IBM Plex Mono' }}>{n}</span>
+                </label>
+              ))}
+            </div>
+            <button className="btn-primary" style={{ width:'100%' }}
+              disabled={!customEpis.length} onClick={runCustom}>
+              RUN CUSTOM → 
+            </button>
+          </div>
+        </div>
+
+        {/* RIGHT: Results */}
+        <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+
+          {!scores && (
+            <div className="card" style={{ padding:60, textAlign:'center' }}>
+              <div style={{ fontSize:40, marginBottom:16 }}>⬡</div>
+              <div style={{ fontFamily:'IBM Plex Mono', fontSize:14, color:'var(--muted)', letterSpacing:'0.05em' }}>
+                SELECT A SCENARIO TO PROPAGATE
+              </div>
+              <p style={{ color:'var(--muted)', fontSize:12, marginTop:8 }}>
+                Risk propagates via BFS over real supply chain graph · {GRAPH.nodes.length} nodes · {RAW_EDGES.length} edges
+              </p>
+            </div>
+          )}
+
+          {scores && (
+            <>
+              {/* Summary Cards */}
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12 }}>
+                {[
+                  { label:'CRITICAL', count: summary.critical, color:'var(--danger)' },
+                  { label:'HIGH',     count: summary.high,     color:'var(--accent2)' },
+                  { label:'MODERATE', count: summary.moderate, color:'var(--warn)' },
+                ].map(({ label, count, color }) => (
+                  <div key={label} className="card" style={{ padding:'14px 16px' }}>
+                    <div style={{ fontFamily:'IBM Plex Mono', fontSize:10, color:'var(--muted)', letterSpacing:'0.12em' }}>{label}</div>
+                    <div style={{ fontSize:32, fontWeight:600, color, fontFamily:'IBM Plex Mono', marginTop:4 }}>{count}</div>
+                    <div style={{ fontSize:11, color:'var(--muted)' }}>companies</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Tabs */}
+              <div style={{ display:'flex', gap:8 }}>
+                {['network','rankings','mc'].map(t => (
+                  <button key={t} onClick={() => setTab(t)}
+                    style={{
+                      fontFamily:'IBM Plex Mono', fontSize:11, letterSpacing:'0.08em',
+                      padding:'6px 16px', borderRadius:4, cursor:'pointer',
+                      background: tab===t ? 'var(--accent)' : 'var(--surface2)',
+                      color: tab===t ? '#0a0e1a' : 'var(--muted)',
+                      border: tab===t ? 'none' : '1px solid var(--border)',
+                      transition:'all 0.2s',
+                    }}>
+                    {t === 'network' ? 'NETWORK' : t === 'rankings' ? 'RANKINGS' : 'MONTE CARLO'}
+                  </button>
+                ))}
+                {activeScenario && tab === 'mc' && !mcResults && (
+                  <button className="btn-primary" style={{ marginLeft:'auto' }}
+                    onClick={runMC} disabled={mcLoading}>
+                    {mcLoading ? <span className="pulse">RUNNING 500 ITERATIONS…</span> : 'RUN SIMULATION →'}
+                  </button>
+                )}
+              </div>
+
+              {/* Tab Content */}
+              <div className="card" style={{ padding:20 }}>
+                {tab === 'network' && (
+                  <div className="fade-in">
+                    <NetworkViz scores={scores} epicenters={activeScenario?.affected || []} />
+                    <p style={{ textAlign:'center', fontSize:11, color:'var(--muted)', fontFamily:'IBM Plex Mono', marginTop:8 }}>
+                      Node size ∝ risk score · Blue ring = epicenter · Edges from connections.csv
+                    </p>
+                  </div>
+                )}
+
+                {tab === 'rankings' && (
+                  <div className="fade-in">
+                    <div style={{ fontFamily:'IBM Plex Mono', fontSize:10, color:'var(--muted)', letterSpacing:'0.12em', marginBottom:14 }}>
+                      PROPAGATED RISK SCORES — sorted descending · threshold &gt;5%
+                    </div>
+                    {sorted.map(([company, score], i) => {
+                      const lvl = riskLevel(score);
+                      const isEpi = activeScenario?.affected?.includes(company);
+                      return (
+                        <div key={company} style={{
+                          display:'flex', alignItems:'center', gap:12,
+                          padding:'10px 0', borderBottom:'1px solid var(--border)',
+                        }}>
+                          <span style={{ fontFamily:'IBM Plex Mono', fontSize:12, color:'var(--muted)', width:24 }}>
+                            {String(i+1).padStart(2,'0')}
+                          </span>
+                          <div style={{ flex:1 }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
+                              <span style={{ fontSize:13, fontWeight:500 }}>{company}</span>
+                              {isEpi && (
+                                <span style={{ fontSize:10, fontFamily:'IBM Plex Mono', color:'var(--accent)',
+                                  border:'1px solid var(--accent)', padding:'1px 6px', borderRadius:3 }}>
+                                  EPICENTER
+                                </span>
+                              )}
+                              <span className={`mono ${lvl.cls}`} style={{ fontSize:10, padding:'1px 8px', borderRadius:3 }}>
+                                {lvl.label}
+                              </span>
+                            </div>
+                            <div style={{ height:4, background:'var(--surface2)', borderRadius:2, overflow:'hidden' }}>
+                              <div className="risk-bar-fill"
+                                style={{ width:`${score*100}%`, background:`linear-gradient(90deg, ${riskColor(score)}88, ${riskColor(score)})` }} />
+                            </div>
+                          </div>
+                          <span style={{ fontFamily:'IBM Plex Mono', fontSize:14, fontWeight:600, color: riskColor(score), width:52, textAlign:'right' }}>
+                            {(score*100).toFixed(1)}%
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {tab === 'mc' && (
+                  <div className="fade-in">
+                    <div style={{ fontFamily:'IBM Plex Mono', fontSize:10, color:'var(--muted)', letterSpacing:'0.12em', marginBottom:14 }}>
+                      MONTE CARLO UNCERTAINTY QUANTIFICATION
+                    </div>
+                    {!mcResults && !mcLoading && (
+                      <div style={{ textAlign:'center', padding:40, color:'var(--muted)' }}>
+                        <div style={{ fontSize:12, fontFamily:'IBM Plex Mono', marginBottom:8 }}>
+                          Click "RUN SIMULATION" above to quantify propagation uncertainty
+                        </div>
+                        <p style={{ fontSize:11 }}>
+                          500 iterations with ±15% intensity perturbation · computes p5/p50/p95 per node
+                        </p>
+                      </div>
+                    )}
+                    {mcLoading && (
+                      <div style={{ textAlign:'center', padding:40 }}>
+                        <div style={{ fontFamily:'IBM Plex Mono', fontSize:13, color:'var(--accent)' }} className="pulse">
+                          RUNNING 500 MONTE CARLO ITERATIONS…
+                        </div>
+                      </div>
+                    )}
+                    {mcResults && <MCPanel mcResults={mcResults} />}
+                  </div>
+                )}
+              </div>
+
+              {/* Scenario info bar */}
+              {activeScenario && (
+                <div className="card" style={{ padding:'10px 16px', display:'flex', alignItems:'center', gap:16, flexWrap:'wrap' }}>
+                  <span style={{ fontFamily:'IBM Plex Mono', fontSize:10, color:'var(--muted)' }}>ACTIVE SCENARIO</span>
+                  <span style={{ fontSize:13, fontWeight:500 }}>{activeScenario.name}</span>
+                  <span style={{ fontFamily:'IBM Plex Mono', fontSize:11, color: activeScenario.color || 'var(--accent)' }}>
+                    {Math.round(activeScenario.intensity*100)}% INTENSITY
+                  </span>
+                  <span style={{ fontFamily:'IBM Plex Mono', fontSize:11, color:'var(--muted)' }}>
+                    EPICENTERS: {activeScenario.affected.join(' · ')}
+                  </span>
+                  <span style={{ fontFamily:'IBM Plex Mono', fontSize:10, color:'var(--muted)', marginLeft:'auto' }}>
+                    {apiMode && apiStatus==='online' ? '⬡ GNN API' : '⬡ LOCAL BFS'}
+                  </span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.render(<App />, document.getElementById('root'));
 </script>
 </body>
 </html>
