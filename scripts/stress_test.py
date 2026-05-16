@@ -2,6 +2,8 @@
 Interactive Stress Testing Interface
 Run crisis scenarios and analyze supply chain vulnerabilities
 """
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import torch
 import pickle
@@ -32,7 +34,7 @@ class SupplyChainStressTester:
         """
         # Load model
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.data = torch.load(data_path, map_location=self.device)
+        self.data = torch.load(data_path, map_location=self.device,weights_only=False)
         
         # Load mappings
         with open(mappings_path, 'rb') as f:
@@ -50,7 +52,7 @@ class SupplyChainStressTester:
         )
         
         # Load weights
-        checkpoint = torch.load(model_path, map_location=self.device)
+        checkpoint = torch.load(model_path, map_location=self.device,weights_only=False)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.model.to(self.device)
         self.model.eval()

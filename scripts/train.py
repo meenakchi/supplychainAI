@@ -2,6 +2,8 @@
 Training Script for Supply Chain GNN
 Trains the model on synthetic shock propagation data
 """
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import torch
 import torch.nn as nn
@@ -321,7 +323,7 @@ def main():
     
     # Load data
     print("\n1. Loading supply chain data...")
-    loader = SupplyChainDataLoader("../data/connections.csv")
+    loader = SupplyChainDataLoader(os.path.join(os.path.dirname(__file__), '..', 'data', 'connections.csv'))
     data = loader.prepare_data()
     
     # Create simulator
