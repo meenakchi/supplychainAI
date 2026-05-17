@@ -1,35 +1,53 @@
 source,target,relationship
 Nvidia,TSMC,Supplier
-Apple,TSMC,Supplier
-Microsoft,Nvidia,Customer
-Tesla,Nvidia,Customer
 AMD,TSMC,Supplier
-Google,Nvidia,Customer
-Amazon,Nvidia,Customer
-Intel,ASML,Supplier
-Samsung,ASML,Supplier
-Apple,Foxconn,Supplier
-Dell,Nvidia,Customer
-HP,Intel,Customer
-Tesla,Panasonic,Supplier
-Tesla,LG,Supplier
-Ford,CATL,Supplier
-GM,LG,Supplier
-Apple,Samsung,Supplier
+Apple,TSMC,Supplier
 Qualcomm,TSMC,Supplier
 MediaTek,TSMC,Supplier
 Sony,TSMC,Supplier
-Toyota,Denso,Supplier
-VW,Bosch,Supplier
+Intel,TSMC,Supplier
+Broadcom,TSMC,Supplier
+Marvell,TSMC,Supplier
+AMD,Samsung,Supplier
+Intel,Samsung,Supplier
+Qualcomm,Samsung,Supplier
 Tesla,Samsung,Supplier
-Apple,SK_Hynix,Supplier
-Microsoft,AMD,Customer
-Amazon,Intel,Customer
-Meta,Nvidia,Customer
-ByteDance,Nvidia,Customer
-Alibaba,Nvidia,Customer
-Tencent,Nvidia,Customer
-MP Materials,Apple,Customer
+AMD,GlobalFoundries,Supplier
+Qualcomm,GlobalFoundries,Supplier
+Intel,GlobalFoundries,Supplier
+AMD,UMC,Supplier
+Intel,UMC,Supplier
+Intel,ASML,Supplier
+Samsung,ASML,Supplier
+TSMC,ASML,Supplier
+TSMC,Shin-Etsu Chemical,Supplier
+Samsung,Shin-Etsu Chemical,Supplier
+Intel,Shin-Etsu Chemical,Supplier
+TSMC,Sumco,Supplier
+Samsung,Sumco,Supplier
+TSMC,Applied Materials,Supplier
+Samsung,Applied Materials,Supplier
+Intel,Applied Materials,Supplier
+TSMC,Lam Research,Supplier
+Samsung,Lam Research,Supplier
+Intel,Lam Research,Supplier
+TSMC,KLA Corporation,Supplier
+Samsung,KLA Corporation,Supplier
+Intel,KLA Corporation,Supplier
+Apple,SK Hynix,Supplier
+Apple,Micron Technology,Supplier
+Apple,Samsung SDI,Supplier
+Apple,Kioxia,Supplier
+Dell,Micron Technology,Supplier
+Dell,SK Hynix,Supplier
+HP,Micron Technology,Supplier
+HP,SK Hynix,Supplier
+Intel,SK Hynix,Customer
+Apple,Foxconn,Supplier
+Apple,Pegatron,Supplier
+Apple,Wistron,Supplier
+Apple,Luxshare Precision,Supplier
+Apple,Jabil,Supplier
 Apple,Murata Manufacturing,Supplier
 Apple,TDK,Supplier
 Apple,Kyocera,Supplier
@@ -38,58 +56,173 @@ Apple,Skyworks Solutions,Supplier
 Apple,Qorvo,Supplier
 Apple,Broadcom,Supplier
 Apple,Corning,Supplier
-Apple,Luxshare Precision,Supplier
-Apple,Jabil,Supplier
-Apple,Pegatron,Supplier
-Apple,Wistron,Supplier
 Apple,LG Display,Supplier
 Apple,LG Chem,Supplier
 Apple,LG Innotek,Supplier
 Apple,Sony,Supplier
-Apple,Samsung SDI,Supplier
-Apple,Micron Technology,Supplier
-Apple,Western Digital,Supplier
+Apple,Sharp,Supplier
+Apple,BOE Technology,Supplier
+Apple,Nidec,Supplier
+Apple,Amkor Technology,Supplier
+Apple,ASE Technology,Supplier
+Apple,Renesas Electronics,Supplier
 Apple,Texas Instruments,Supplier
 Apple,NXP Semiconductors,Supplier
 Apple,STMicroelectronics,Supplier
 Apple,Infineon Technologies,Supplier
 Apple,Analog Devices,Supplier
-Apple,Kioxia,Supplier
-Apple,Sharp,Supplier
-Apple,BOE Technology,Supplier
-Apple,Intel,Supplier
-Apple,Panasonic,Supplier
-Apple,Nidec,Supplier
-Apple,Amkor Technology,Supplier
-Apple,ASE Technology,Supplier
-Apple,Renesas Electronics,Supplier
 Apple,ON Semiconductor,Supplier
 Apple,Sumitomo Electric,Supplier
-Apple,Robert Bosch,Supplier
 Apple,Goertek,Supplier
-Qualcomm,Samsung,Supplier
-Qualcomm,GlobalFoundries,Supplier
+Apple,Western Digital,Supplier
+Apple,Panasonic,Supplier
 Apple,Qualcomm,Customer
-Samsung,Qualcomm,Customer
-Xiaomi,Qualcomm,Customer
-Tesla,CATL,Supplier
-AMD,GlobalFoundries,Supplier
-AMD,Samsung,Supplier
-AMD,UMC,Supplier
-Sony,AMD,Customer
-Intel,TSMC,Supplier
-Intel,Samsung,Supplier
-Intel,GlobalFoundries,Supplier
-Intel,UMC,Supplier
-Intel,Mobileye,Customer
-Intel,Altera,Customer
-Amazon,Intel,Customer
+Apple,Intel,Supplier
+Apple,Samsung,Supplier
+Apple,TSMC,Supplier
+Microsoft,Nvidia,Customer
+Tesla,Nvidia,Customer
+Google,Nvidia,Customer
+Amazon,Nvidia,Customer
+Dell,Nvidia,Customer
+Meta,Nvidia,Customer
+ByteDance,Nvidia,Customer
+Alibaba,Nvidia,Customer
+Tencent,Nvidia,Customer
+Oracle,Nvidia,Customer
+Snowflake,Nvidia,Customer
 Microsoft,Intel,Customer
+Amazon,Intel,Customer
 HP,Intel,Customer
 Dell,Intel,Customer
 Lenovo,Intel,Customer
 Asus,Intel,Customer
 Acer,Intel,Customer
-Intel,Brookfield,Customer
-Intel,Apollo,Customer
-Intel,SK_Hynix,Customer
+Oracle,Intel,Customer
+Microsoft,AMD,Customer
+Sony,AMD,Customer
+Oracle,AMD,Customer
+Samsung,Qualcomm,Customer
+Xiaomi,Qualcomm,Customer
+Tesla,Panasonic,Supplier
+Tesla,CATL,Supplier
+Tesla,LG,Supplier
+Ford,CATL,Supplier
+Ford,SK Innovation,Supplier
+GM,LG,Supplier
+GM,Samsung SDI,Supplier
+GM,CATL,Supplier
+Hyundai,LG,Supplier
+Hyundai,Samsung SDI,Supplier
+Stellantis,CATL,Supplier
+Stellantis,Samsung SDI,Supplier
+BYD,CATL,Supplier
+Toyota,Denso,Supplier
+Toyota,Renesas Electronics,Supplier
+VW,Bosch,Supplier
+VW,Infineon Technologies,Supplier
+Ford,Bosch,Supplier
+GM,Bosch,Supplier
+Hyundai,Bosch,Supplier
+Stellantis,Bosch,Supplier
+Tesla,STMicroelectronics,Supplier
+Tesla,Mobileye,Customer
+Intel,Mobileye,Customer
+Amazon,Oracle,Customer
+Snowflake,Amazon,Customer
+Snowflake,Microsoft,Customer
+Snowflake,Google,Customer
+Apple,MP Materials,Supplier
+Tesla,MP Materials,Supplier
+MP Materials,Apple,Customer
+MP Materials,Tesla,Customer
+Rivian,Amazon,Customer
+Nvidia,Samsung,Supplier
+Micron Technology,TSMC,Supplier
+Micron Technology,Samsung,Supplier
+Qualcomm,Apple,Customer
+Broadcom,Apple,Customer
+Skyworks Solutions,Apple,Customer
+Cirrus Logic,Apple,Customer
+Texas Instruments,Apple,Customer
+Corning,Apple,Customer
+Foxconn,Apple,Customer
+Lenovo,AMD,Customer
+Asus,AMD,Customer
+Acer,AMD,Customer
+Asus,Nvidia,Customer
+Lenovo,Nvidia,Customer
+BYD,STMicroelectronics,Supplier
+BYD,Infineon Technologies,Supplier
+BYD,NXP Semiconductors,Supplier
+Toyota,STMicroelectronics,Supplier
+Toyota,Infineon Technologies,Supplier
+Toyota,NXP Semiconductors,Supplier
+Ford,STMicroelectronics,Supplier
+GM,STMicroelectronics,Supplier
+HP,AMD,Customer
+CATL,ASML,Supplier
+Micron Technology,Applied Materials,Supplier
+Micron Technology,Lam Research,Supplier
+Kioxia,ASML,Supplier
+Kioxia,Applied Materials,Supplier
+Arm,Apple,Customer
+Arm,Nvidia,Customer
+Arm,Qualcomm,Customer
+Arm,MediaTek,Customer
+Arm,Samsung,Customer
+TSMC,Air Products,Supplier
+Samsung,Air Products,Supplier
+Intel,Air Products,Supplier
+Nvidia,ASML,Supplier
+TSMC,Tokyo Electron,Supplier
+Samsung,Tokyo Electron,Supplier
+Intel,Tokyo Electron,Supplier
+Panasonic,CATL,Customer
+Panasonic,Tesla,Customer
+LG,GM,Customer
+LG,Hyundai,Customer
+Samsung SDI,BMW,Customer
+Samsung SDI,Volkswagen,Customer
+Volkswagen,Bosch,Supplier
+BMW,Bosch,Supplier
+BMW,STMicroelectronics,Supplier
+BMW,Infineon Technologies,Supplier
+BMW,NXP Semiconductors,Supplier
+BMW,Samsung SDI,Supplier
+TSMC,Entegris,Supplier
+Samsung,Entegris,Supplier
+Intel,Entegris,Supplier
+Nvidia,Taiwan,Customer
+Qualcomm,Foxconn,Customer
+Honeywell,Boeing,Customer
+Honeywell,Airbus,Customer
+Boeing,Honeywell,Supplier
+Airbus,Honeywell,Supplier
+Micron Technology,Apple,Customer
+Micron Technology,Dell,Customer
+Micron Technology,HP,Customer
+Micron Technology,Lenovo,Customer
+Western Digital,Apple,Customer
+Western Digital,Seagate,Customer
+Seagate,Apple,Customer
+Seagate,Dell,Customer
+Seagate,HP,Customer
+Samsung,Google,Customer
+Samsung,Amazon,Customer
+NXP Semiconductors,Ford,Customer
+NXP Semiconductors,BMW,Customer
+NXP Semiconductors,Toyota,Customer
+Renesas Electronics,Toyota,Customer
+Renesas Electronics,Honda,Customer
+Honda,Renesas Electronics,Supplier
+Honda,Bosch,Supplier
+Honda,Denso,Supplier
+Toyota,Honda,Customer
+Foxconn,Nvidia,Customer
+Foxconn,Intel,Customer
+Foxconn,AMD,Customer
+Cisco,Intel,Customer
+Cisco,Broadcom,Supplier
+Cisco,Marvell,Supplier
+Netflix,Amazon,Customer
