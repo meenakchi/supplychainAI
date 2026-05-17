@@ -119,8 +119,8 @@ Stellantis,Samsung SDI,Supplier
 BYD,CATL,Supplier
 Toyota,Denso,Supplier
 Toyota,Renesas Electronics,Supplier
-VW,Bosch,Supplier
-VW,Infineon Technologies,Supplier
+Volkswagen,Bosch,Supplier
+Volkswagen,Infineon Technologies,Supplier
 Ford,Bosch,Supplier
 GM,Bosch,Supplier
 Hyundai,Bosch,Supplier
@@ -193,7 +193,6 @@ BMW,Samsung SDI,Supplier
 TSMC,Entegris,Supplier
 Samsung,Entegris,Supplier
 Intel,Entegris,Supplier
-Nvidia,Taiwan,Customer
 Qualcomm,Foxconn,Customer
 Honeywell,Boeing,Customer
 Honeywell,Airbus,Customer

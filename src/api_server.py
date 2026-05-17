@@ -88,26 +88,71 @@ MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "models")
 
 def load_graph(path: str) -> nx.DiGraph:
     """Build directed supply-chain graph from CSV.
-
+ 
     CSV columns: source, target, relationship
-    relationship ∈ {Supplier, Customer}
-
-    Edge direction: supplier → customer  (risk flows downstream)
+    
+    INTERPRETATION:
+      "Nvidia, TSMC, Supplier"  => TSMC is Nvidia's supplier => TSMC supplies Nvidia
+      Edge direction (risk flow): TSMC --> Nvidia
+      So: add_edge(target, source)  i.e. add_edge(TSMC, Nvidia)
+ 
+      "Microsoft, Nvidia, Customer" => Microsoft is Nvidia's customer => Nvidia supplies Microsoft
+      Edge direction (risk flow): Nvidia --> Microsoft
+      So: add_edge(target, source)  i.e. add_edge(Nvidia, Microsoft)
+ 
+    Both cases reduce to the same rule: add_edge(target, source).
+    The original api_server.py was wrong for Supplier rows (it did src->tgt).
     """
     df = pd.read_csv(path)
-    G  = nx.DiGraph()
-
+    G = nx.DiGraph()
+ 
     for _, row in df.iterrows():
         src, tgt, rel = row["source"], row["target"], row["relationship"]
+ 
         if rel == "Supplier":
-            G.add_edge(src, tgt)   # src supplies tgt
+            # src uses tgt as a supplier => tgt supplies src => risk flows tgt -> src
+            G.add_edge(tgt, src)   # ✓ FIXED (was: G.add_edge(src, tgt))
+ 
         elif rel == "Customer":
-            G.add_edge(tgt, src)   # tgt supplies src
+            # src is a customer of tgt => tgt supplies src => risk flows tgt -> src
+            G.add_edge(tgt, src)   # ✓ CORRECT (unchanged)
+ 
         else:
-            G.add_edge(src, tgt)
-
+            # Fallback: treat as downstream
+            G.add_edge(tgt, src)
+ 
     return G
-
+ 
+ 
+# ── Quick sanity check ────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    import io
+ 
+    # Minimal test
+    test_csv = """source,target,relationship
+Nvidia,TSMC,Supplier
+Microsoft,Nvidia,Customer
+Apple,TSMC,Supplier"""
+ 
+    df = pd.read_csv(io.StringIO(test_csv))
+    G = nx.DiGraph()
+    for _, row in df.iterrows():
+        src, tgt, rel = row["source"], row["target"], row["relationship"]
+        G.add_edge(tgt, src)
+ 
+    print("Edges (should all be: supplier/upstream -> customer/downstream):")
+    for u, v in G.edges():
+        print(f"  {u} --> {v}")
+ 
+    print("\nExpected:")
+    print("  TSMC --> Nvidia")
+    print("  Nvidia --> Microsoft")
+    print("  TSMC --> Apple")
+ 
+    # Downstream from TSMC
+    print(f"\nDownstream of TSMC: {list(G.successors('TSMC'))}")
+    print(f"Upstream of Nvidia: {list(G.predecessors('Nvidia'))}")
+ 
 
 def bfs_propagate(
     G: nx.DiGraph,

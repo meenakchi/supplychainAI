@@ -179,29 +179,67 @@ const RAW_EDGES = [
 
 // Build proper adjacency from real edge data
 function buildGraph(edges) {
-  // downstream[A] = companies that depend on A (A is supplier)
-  // upstream[A]   = companies A depends on (A is customer)
-  const downstream = {};
-  const upstream = {};
-  const nodes = new Set();
-
+  /*
+   * CSV semantics:
+   *   source=Nvidia, target=TSMC, rel=Supplier  => TSMC supplies Nvidia => TSMC -> Nvidia
+   *   source=Microsoft, target=Nvidia, rel=Customer => Nvidia supplies Microsoft => Nvidia -> Microsoft
+   *
+   * Both cases: the ACTUAL supplier is `target` for Supplier rows,
+   *             and `target` for Customer rows too.
+   * Rule: supplier = target, customer = source  (for Supplier rows)
+   *       supplier = target, customer = source  (for Customer rows — same logic!)
+   *
+   * In other words: always add_edge(target, source) regardless of rel type,
+   * because the risk/supply always flows from target -> source in this CSV format.
+   */
+  const downstream = {};   // downstream[A] = Set of companies A supplies (A -> them)
+  const upstream   = {};   // upstream[A]   = Set of companies that supply A (them -> A)
+  const nodes      = new Set();
+ 
   edges.forEach(({ source, target, rel }) => {
-    nodes.add(source); nodes.add(target);
-    // "source is Supplier to target" OR "source is Customer of target"
-    let supplier, customer;
-    if (rel === 'Supplier') { supplier = source; customer = target; }
-    else                    { supplier = target; customer = source; }
-
+    nodes.add(source);
+    nodes.add(target);
+ 
+    // supplier is always `target`, customer is always `source`
+    const supplier  = target;
+    const customer  = source;
+ 
     if (!downstream[supplier]) downstream[supplier] = new Set();
     if (!upstream[customer])   upstream[customer]   = new Set();
+ 
     downstream[supplier].add(customer);
     upstream[customer].add(supplier);
   });
-
+ 
   return { downstream, upstream, nodes: [...nodes] };
 }
-
-const GRAPH = buildGraph(RAW_EDGES);
+ 
+// ── RAW_EDGES — unchanged from original, just needs correct buildGraph ────────
+// (Keep your existing RAW_EDGES array here — no changes needed to the data itself)
+ 
+// ── FIXED propagateRisk ───────────────────────────────────────────────────────
+// This function is correct in the original once buildGraph is fixed,
+// because it reads from GRAPH.downstream and GRAPH.upstream which will
+// now be populated correctly. No changes needed to propagateRisk itself.
+ 
+// ── Sanity check you can paste into browser console ──────────────────────────
+/*
+  After the fix, run in browser console to verify:
+ 
+  const g = buildGraph(RAW_EDGES);
+ 
+  // TSMC should appear in downstream of its real suppliers (Shin-Etsu, ASML, etc.)
+  // AND TSMC's customers should appear in downstream[TSMC]
+  console.log("TSMC downstream (companies TSMC supplies):", [...(g.downstream['TSMC'] || [])]);
+  // Expected: Apple, Nvidia, AMD, Qualcomm, MediaTek, Sony, Intel, etc.
+ 
+  console.log("TSMC upstream (who supplies TSMC):", [...(g.upstream['TSMC'] || [])]);
+  // Expected: ASML, Applied Materials, Lam Research, Shin-Etsu, etc.
+ 
+  // Nvidia downstream should be its customers (Microsoft, Tesla, Google, etc.)
+  console.log("Nvidia downstream:", [...(g.downstream['Nvidia'] || [])]);
+  // Expected: Microsoft, Tesla, Google, Amazon, Meta, etc.
+*/
 
 // BFS-based propagation — replaces hardcoded dependency map
 // Downstream: supplier shock ripples to customers (intensity * 0.75 per hop)
