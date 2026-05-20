@@ -71,19 +71,20 @@ class SupplyChainGNN(nn.Module):
             for _ in range(num_layers)
         ])
     
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, return_attention: bool = False):
         """
         Forward pass
         
         Args:
             x: Node features [num_nodes, input_dim]
             edge_index: Edge indices [2, num_edges]
+            return_attention: Whether to return attention weights for GAT
         
         Returns:
             Risk scores [num_nodes, 1]
         """
         # Input layer
-        x = self.input_layer(x, edge_index)
+        x, (edge_idx, alpha) = self.input_layer(x, edge_index, return_attention_weights=True)
         x = self.batch_norms[0](x)
         x = F.elu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
@@ -99,6 +100,8 @@ class SupplyChainGNN(nn.Module):
         x = self.output_layer(x)
         x = torch.sigmoid(x)  # Risk score between 0 and 1
         
+        if return_attention:
+         return x, (edge_idx, alpha)
         return x
 
 

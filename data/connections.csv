@@ -34,15 +34,15 @@ Intel,Lam Research,Supplier
 TSMC,KLA Corporation,Supplier
 Samsung,KLA Corporation,Supplier
 Intel,KLA Corporation,Supplier
-Apple,SK Hynix,Supplier
+Apple,SK_Hynix,Supplier
 Apple,Micron Technology,Supplier
 Apple,Samsung SDI,Supplier
 Apple,Kioxia,Supplier
 Dell,Micron Technology,Supplier
-Dell,SK Hynix,Supplier
+Dell,SK_Hynix,Supplier
 HP,Micron Technology,Supplier
-HP,SK Hynix,Supplier
-Intel,SK Hynix,Customer
+HP,SK_Hynix,Supplier
+Intel,SK_Hynix,Customer
 Apple,Foxconn,Supplier
 Apple,Pegatron,Supplier
 Apple,Wistron,Supplier
