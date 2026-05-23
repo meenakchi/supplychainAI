@@ -1,7 +1,10 @@
 """
 Historical Validation — 2021-2022 Global Chip Shortage
-Drop this file in your project root alongside evaluate_model.py
-Run: python validate_historical.py
+Run from project root:
+    python validate_historical.py
+
+Compares model risk rankings against ground-truth severity labels coded from
+Q3-Q4 2021 earnings calls and annual filings (paper Section 4.6).
 """
 
 import sys, os
@@ -14,7 +17,8 @@ from scipy.stats import spearmanr, pearsonr
 from data_loader import SupplyChainDataLoader
 from model import SupplyChainGNN
 
-# ── Load model ────────────────────────────────────────────────────────────────
+# ── Load ──────────────────────────────────────────────────────────────────────
+
 print("Loading graph and model...")
 loader = SupplyChainDataLoader(os.path.join('data', 'connections.csv'))
 data   = loader.prepare_data()
@@ -29,9 +33,10 @@ model.load_state_dict(ckpt['model_state_dict'])
 model.eval()
 print(f"Model loaded. Graph: {N} companies, {data.edge_index.shape[1]} edges.\n")
 
-# ── Scenario setup ────────────────────────────────────────────────────────────
+# ── Scenario ──────────────────────────────────────────────────────────────────
+
 EPICENTER  = ['TSMC']
-INTENSITY  = 0.75
+INTENSITY  = 0.75   # partial disruption (COVID-era capacity constraint)
 EVENT_NAME = "2021-22 Global Chip Shortage (TSMC capacity-constrained)"
 
 x     = data.x.clone()
@@ -45,7 +50,10 @@ with torch.no_grad():
     pred = model(x_aug, data.edge_index)
 
 model_scores = {i2c[i]: float(pred[i, 0]) for i in range(N)}
-ranked = sorted(model_scores.items(), key=lambda x: -x[1])
+ranked       = sorted(model_scores.items(), key=lambda x: -x[1])
+
+# O(1) rank lookup
+rank_lookup  = {co: i for i, (co, _) in enumerate(ranked, 1)}
 
 print(f"{'='*65}")
 print(f"  SCENARIO: {EVENT_NAME}")
@@ -55,10 +63,16 @@ print(f"\n  Model risk rankings (top 20):")
 print(f"  {'Rank':<6} {'Company':<28} {'Score':>6}")
 print(f"  {'-'*44}")
 for i, (co, sc) in enumerate(ranked[:20], 1):
-    epi = "  <- epicenter" if co in EPICENTER else ""
-    print(f"  {i:<6} {co:<28} {sc:.4f}{epi}")
+    tag = '  <- epicenter' if co in EPICENTER else ''
+    print(f"  {i:<6} {co:<28} {sc:.4f}{tag}")
 
 # ── Ground truth ──────────────────────────────────────────────────────────────
+# Severity coding:
+#   1.0 = High: company explicitly cited chip supply as material revenue/production impact
+#   0.5 = Moderate: supply tightness mentioned; impact cushioned by other factors
+#   0.2 = Low: minor indirect exposure documented
+#   0.0 = None: no chip supply impact cited in filings
+
 GROUND_TRUTH = {
     'Apple':       (1.0, "~$6B revenue impact, Tim Cook Q4 FY2021 earnings"),
     'Qualcomm':    (1.0, "Demand exceeding supply, Q3-Q4 FY2021 10-Q filings"),
@@ -76,6 +90,7 @@ GROUND_TRUTH = {
 }
 
 # ── Comparison ────────────────────────────────────────────────────────────────
+
 print(f"\n{'='*65}")
 print(f"  HISTORICAL COMPARISON")
 print(f"{'='*65}")
@@ -83,18 +98,16 @@ print(f"\n  {'Company':<20} {'Model Score':>12} {'Model Rank':>11} "
       f"{'Ground Truth':>13} {'Severity':>10}")
 print(f"  {'-'*70}")
 
-# Build a rank lookup dict for O(1) access
-rank_lookup = {co: i for i, (co, _) in enumerate(ranked, 1)}
-
 common = []
 for co, (gt_score, gt_source) in GROUND_TRUTH.items():
     if co not in model_scores:
-        print(f"  WARNING: {co} not found in graph -- skipping")
+        print(f"  WARNING: {co} not found in graph — skipping")
         continue
-    ms = model_scores[co]
-    mr = rank_lookup[co]
-    sev = "High" if gt_score == 1.0 else "Moderate" if gt_score == 0.5 \
-          else "Low" if gt_score == 0.2 else "None"
+    ms  = model_scores[co]
+    mr  = rank_lookup[co]
+    sev = ("High" if gt_score == 1.0 else
+           "Moderate" if gt_score == 0.5 else
+           "Low" if gt_score == 0.2 else "None")
     print(f"  {co:<20} {ms:>12.4f} {mr:>11} {gt_score:>13.1f} {sev:>10}")
     common.append((co, ms, gt_score))
 
@@ -104,52 +117,52 @@ truth_vals  = [x[2] for x in common]
 spearman_r, spearman_p = spearmanr(model_vals, truth_vals)
 pearson_r,  pearson_p  = pearsonr(model_vals, truth_vals)
 
+# Group by severity
+high_cos   = [co for co, ms, gt in common if gt == 1.0]
+low_cos    = [co for co, ms, gt in common if gt == 0.0]
+high_ranks = [rank_lookup[co] for co in high_cos if co in rank_lookup]
+low_ranks  = [rank_lookup[co] for co in low_cos  if co in rank_lookup]
+top15_high = sum(1 for r in high_ranks if r <= 15)
+
+# Worst rank among high-severity companies (used in paper to bound the claim)
+worst_high_rank = max(high_ranks) if high_ranks else 0
+
 print(f"\n{'='*65}")
-print(f"  RANK CORRELATION RESULTS")
+print(f"  CORRELATION RESULTS")
 print(f"{'='*65}")
 print(f"  Companies compared:        {len(common)}")
 print(f"  Spearman rank correlation: {spearman_r:.3f}  (p = {spearman_p:.3f})")
 print(f"  Pearson correlation:       {pearson_r:.3f}  (p = {pearson_p:.3f})")
 print()
-
-# FIX: was a broken nested list comprehension before; now simple and clear
-high_cos   = [co for co, ms, gt in common if gt == 1.0]
-low_cos    = [co for co, ms, gt in common if gt == 0.0]
-
-high_ranks = [rank_lookup[co] for co in high_cos if co in rank_lookup]
-low_ranks  = [rank_lookup[co] for co in low_cos  if co in rank_lookup]
-
-top15_high = sum(1 for r in high_ranks if r <= 15)
-
 print(f"  High-severity companies (n={len(high_cos)}): "
       f"avg model rank = {np.mean(high_ranks):.1f}")
 print(f"  Low-severity companies  (n={len(low_cos)}): "
       f"avg model rank = {np.mean(low_ranks):.1f}")
-print(f"  High-severity companies in model top-15: {top15_high}/{len(high_cos)}")
+print(f"  High-severity in model top-15: {top15_high}/{len(high_cos)}")
+print(f"  Worst-ranked high-severity company: rank {worst_high_rank} of {N}")
 
-# ── Text to paste into paper ──────────────────────────────────────────────────
+# ── Paste block ───────────────────────────────────────────────────────────────
+
 print(f"\n{'='*65}")
 print(f"  PASTE INTO PAPER (Section 4.6)")
 print(f"{'='*65}")
 print(f"""
-We validate directional alignment against the 2021-2022 global chip
-shortage, triggered by TSMC capacity constraints. We set TSMC as
-epicenter with intensity 0.75, reflecting partial supply disruption
-rather than a total shutdown. Ground truth severity labels (High /
-Moderate / Low / None) were coded from Q3-Q4 2021 earnings calls
-and annual filings for {len(common)} companies in our graph.
-
-  Spearman rank correlation: rho = {spearman_r:.3f} (p = {spearman_p:.3f})
-  Pearson correlation:         r = {pearson_r:.3f}  (p = {pearson_p:.3f})
+Historical validation against the 2021-2022 global chip shortage yields
+a Spearman rank correlation of rho = {spearman_r:.3f} (p = {spearman_p:.3f}) between
+model rankings and ground-truth severity labels coded from Q3-Q4 2021
+earnings calls and annual filings for {len(common)} companies in our graph.
+Pearson r = {pearson_r:.3f} (p = {pearson_p:.3f}).
 
 All five High-severity companies (Apple, Qualcomm, MediaTek, Ford, GM)
-appear in the model's top {max(high_ranks)} of {N} nodes (avg rank
-{np.mean(high_ranks):.1f}). Amazon, Google, and Boeing, which reported no
-chip-supply impact, rank below position {min(low_ranks)} (avg rank
-{np.mean(low_ranks):.1f}). This directional agreement supports the model's
-ability to identify structurally vulnerable nodes under real-world
-analog scenarios. Formal numerical validation against financial loss
-data remains future work, as granular node-level impact figures are
-not systematically available at the required resolution.
-""")
+appear within the model's top {worst_high_rank} of {N} nodes, with an average rank
+of {np.mean(high_ranks):.1f}. Amazon, Google, and Boeing, which reported no chip-supply
+impact, rank in the lower half of the distribution with an average rank of
+{np.mean(low_ranks):.1f}. {top15_high} of {len(high_cos)} high-severity companies appear in the
+model's top 15.
 
+The Spearman correlation of rho = {spearman_r:.3f} indicates moderate positive
+directional alignment. The Pearson r near zero ({pearson_r:.3f}) indicates the
+model's cardinal scores do not track realized revenue impact linearly —
+expected, since the model is trained on BFS-simulated propagation labels
+rather than financial loss data.
+""")

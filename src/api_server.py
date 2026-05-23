@@ -1,7 +1,9 @@
 """
 FastAPI Backend — Supply Chain Risk Analyzer
-Fixed version: loads real graph from connections.csv, runs proper BFS propagation.
-GNN model loaded if available; falls back to graph-based simulation otherwise.
+GNN model loaded if available; falls back to graph-based BFS simulation otherwise.
+
+Edge direction: every edge points supplier -> customer (risk flows with edge direction).
+CSV semantics: both Supplier and Customer rows use add_edge(target, source).
 """
 
 from fastapi import FastAPI, HTTPException
@@ -9,15 +11,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
 from datetime import datetime
-import os, sys, pickle, json
+import os, sys, pickle
 import numpy as np
 import pandas as pd
 import networkx as nx
 
-# ── Optional GNN import ───────────────────────────────────────────────────────
 try:
     import torch
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+    sys.path.insert(0, os.path.dirname(__file__))
     from model import SupplyChainGNN
     TORCH_AVAILABLE = True
 except ImportError:
@@ -25,8 +26,8 @@ except ImportError:
 
 app = FastAPI(
     title="Supply Chain Risk Analyzer",
-    description="Graph-based supply chain risk propagation with optional GNN inference.",
-    version="2.0.0",
+    description="GAT-based supply chain risk propagation with BFS fallback.",
+    version="2.1.0",
 )
 
 app.add_middleware(
@@ -40,16 +41,16 @@ app.add_middleware(
 
 class ShockScenario(BaseModel):
     affected_companies: List[str] = Field(..., description="Epicentre companies")
-    intensity: float             = Field(0.8, ge=0.0, le=1.0)
-    scenario_name: Optional[str] = None
-    monte_carlo_n: int           = Field(0, ge=0, le=2000,
-                                         description="If >0, run MC and return percentiles")
+    intensity:          float      = Field(0.8, ge=0.0, le=1.0)
+    scenario_name:      Optional[str] = None
+    monte_carlo_n:      int        = Field(0, ge=0, le=2000,
+                                           description="If >0, run MC and return percentiles")
 
 
 class NodeRisk(BaseModel):
-    company:    str
-    risk_score: float
-    risk_level: str
+    company:      str
+    risk_score:   float
+    risk_level:   str
     is_epicenter: bool
     p5:  Optional[float] = None
     p50: Optional[float] = None
@@ -61,7 +62,7 @@ class ScenarioResult(BaseModel):
     scenario_name:      str
     affected_companies: List[str]
     intensity:          float
-    inference_mode:     str          # "gnn" | "bfs"
+    inference_mode:     str
     timestamp:          str
     predictions:        List[NodeRisk]
     summary:            Dict[str, int]
@@ -70,101 +71,45 @@ class ScenarioResult(BaseModel):
 # ── App state ─────────────────────────────────────────────────────────────────
 
 state: Dict = {
-    "graph":           None,   # nx.DiGraph
-    "company_to_idx":  None,
-    "idx_to_company":  None,
-    "gnn_model":       None,
-    "gnn_data":        None,
-    "device":          None,
+    "graph":          None,
+    "company_to_idx": None,
+    "idx_to_company": None,
+    "gnn_model":      None,
+    "gnn_data":       None,
+    "device":         None,
 }
 
-CONNECTIONS_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "data", "connections.csv"
-)
-MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "models")
+CONNECTIONS_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'connections.csv')
+MODEL_DIR        = os.path.join(os.path.dirname(__file__), '..', 'models')
 
 
 # ── Graph helpers ─────────────────────────────────────────────────────────────
 
 def load_graph(path: str) -> nx.DiGraph:
-    """Build directed supply-chain graph from CSV.
- 
-    CSV columns: source, target, relationship
-    
-    INTERPRETATION:
-      "Nvidia, TSMC, Supplier"  => TSMC is Nvidia's supplier => TSMC supplies Nvidia
-      Edge direction (risk flow): TSMC --> Nvidia
-      So: add_edge(target, source)  i.e. add_edge(TSMC, Nvidia)
- 
-      "Microsoft, Nvidia, Customer" => Microsoft is Nvidia's customer => Nvidia supplies Microsoft
-      Edge direction (risk flow): Nvidia --> Microsoft
-      So: add_edge(target, source)  i.e. add_edge(Nvidia, Microsoft)
- 
-    Both cases reduce to the same rule: add_edge(target, source).
-    The original api_server.py was wrong for Supplier rows (it did src->tgt).
+    """
+    Build directed graph from CSV.
+
+    Both Supplier and Customer rows resolve to the same rule:
+        supplier = target, customer = source => add_edge(target, source)
+
+    "Nvidia, TSMC, Supplier"    => TSMC -> Nvidia
+    "Microsoft, Nvidia, Customer" => Nvidia -> Microsoft
     """
     df = pd.read_csv(path)
-    G = nx.DiGraph()
- 
+    G  = nx.DiGraph()
     for _, row in df.iterrows():
-        src, tgt, rel = row["source"], row["target"], row["relationship"]
- 
-        if rel == "Supplier":
-            # src uses tgt as a supplier => tgt supplies src => risk flows tgt -> src
-            G.add_edge(tgt, src)   # ✓ FIXED (was: G.add_edge(src, tgt))
- 
-        elif rel == "Customer":
-            # src is a customer of tgt => tgt supplies src => risk flows tgt -> src
-            G.add_edge(tgt, src)   # ✓ CORRECT (unchanged)
- 
-        else:
-            # Fallback: treat as downstream
-            G.add_edge(tgt, src)
- 
+        G.add_edge(row['target'], row['source'])
     return G
- 
- 
-# ── Quick sanity check ────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    import io
- 
-    # Minimal test
-    test_csv = """source,target,relationship
-Nvidia,TSMC,Supplier
-Microsoft,Nvidia,Customer
-Apple,TSMC,Supplier"""
- 
-    df = pd.read_csv(io.StringIO(test_csv))
-    G = nx.DiGraph()
-    for _, row in df.iterrows():
-        src, tgt, rel = row["source"], row["target"], row["relationship"]
-        G.add_edge(tgt, src)
- 
-    print("Edges (should all be: supplier/upstream -> customer/downstream):")
-    for u, v in G.edges():
-        print(f"  {u} --> {v}")
- 
-    print("\nExpected:")
-    print("  TSMC --> Nvidia")
-    print("  Nvidia --> Microsoft")
-    print("  TSMC --> Apple")
- 
-    # Downstream from TSMC
-    print(f"\nDownstream of TSMC: {list(G.successors('TSMC'))}")
-    print(f"Upstream of Nvidia: {list(G.predecessors('Nvidia'))}")
- 
 
-def bfs_propagate(
-    G: nx.DiGraph,
-    epicenters: List[str],
-    intensity: float,
-    rng: Optional[np.random.Generator] = None,
-) -> Dict[str, float]:
-    """BFS propagation over real graph edges.
 
-    Downstream (supplier shock → customers): decay 0.72 per hop
-    Upstream   (demand shock → suppliers):   decay 0.42 per hop
-    Random noise per edge if rng is provided (Monte Carlo mode).
+def bfs_propagate(G: nx.DiGraph,
+                  epicenters: List[str],
+                  intensity: float,
+                  rng: Optional[np.random.Generator] = None) -> Dict[str, float]:
+    """
+    BFS risk propagation (paper Section 3.4).
+    Downstream decay: 0.72 per hop (supplier shock -> customers).
+    Upstream decay:   0.42 per hop (demand shock -> suppliers).
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -174,35 +119,28 @@ def bfs_propagate(
         if e in scores:
             scores[e] = float(intensity)
 
-    DECAY_DOWN = 0.72
-    DECAY_UP   = 0.42
-
-    # ── downstream ──────────────────────────────
+    # Downstream
     queue, visited = list(epicenters), set(epicenters)
     while queue:
         node = queue.pop(0)
-        node_risk = scores[node]
-        if node_risk < 0.04:
+        if scores[node] < 0.04:
             continue
         for customer in G.successors(node):
-            prop = node_risk * DECAY_DOWN * rng.uniform(0.75, 1.15)
-            prop = min(prop, 1.0)
+            prop = min(scores[node] * 0.72 * rng.uniform(0.75, 1.15), 1.0)
             if prop > scores[customer]:
                 scores[customer] = prop
                 if customer not in visited:
                     visited.add(customer)
                     queue.append(customer)
 
-    # ── upstream ────────────────────────────────
+    # Upstream
     queue, visited = list(epicenters), set(epicenters)
     while queue:
         node = queue.pop(0)
-        node_risk = scores[node]
-        if node_risk < 0.04:
+        if scores[node] < 0.04:
             continue
         for supplier in G.predecessors(node):
-            prop = node_risk * DECAY_UP * rng.uniform(0.6, 1.0)
-            prop = min(prop, 1.0)
+            prop = min(scores[node] * 0.42 * rng.uniform(0.6, 1.0), 1.0)
             if prop > scores[supplier]:
                 scores[supplier] = prop
                 if supplier not in visited:
@@ -212,27 +150,27 @@ def bfs_propagate(
     return scores
 
 
-def monte_carlo(
-    G: nx.DiGraph,
-    epicenters: List[str],
-    intensity: float,
-    n: int = 500,
-) -> Dict[str, Dict]:
-    """Run n BFS iterations with perturbed intensity, return per-node statistics."""
+def monte_carlo(G: nx.DiGraph,
+                epicenters: List[str],
+                intensity: float,
+                n: int = 500) -> Dict[str, Dict]:
+    """Run n BFS iterations with ±15% perturbed intensity; return per-node stats."""
     per_node: Dict[str, list] = {node: [] for node in G.nodes}
     rng = np.random.default_rng(42)
 
     for _ in range(n):
-        perturbed = float(np.clip(intensity * rng.uniform(0.80, 1.20), 0, 1))
-        scores = bfs_propagate(G, epicenters, perturbed, rng)
+        perturbed = float(np.clip(intensity * rng.uniform(0.85, 1.15), 0.0, 1.0))
+        scores    = bfs_propagate(G, epicenters, perturbed, rng)
         for node, score in scores.items():
             per_node[node].append(score)
 
+    # Compute stats in a single pass after all samples are collected
     stats = {}
     for node, samples in per_node.items():
         arr = np.array(samples)
+        mean = arr.mean()
         stats[node] = {
-            "mean": float(arr.mean()),
+            "mean": float(mean),
             "std":  float(arr.std()),
             "p5":   float(np.percentile(arr, 5)),
             "p50":  float(np.percentile(arr, 50)),
@@ -243,19 +181,17 @@ def monte_carlo(
 
 # ── GNN inference (optional) ──────────────────────────────────────────────────
 
-def gnn_predict(
-    epicenters: List[str],
-    intensity: float,
-) -> Optional[Dict[str, float]]:
-    """Run trained GNN if available. Returns None if not possible."""
+def gnn_predict(epicenters: List[str],
+                intensity: float) -> Optional[Dict[str, float]]:
+    """Run trained GNN. Returns None if model not loaded or inference fails."""
     if not TORCH_AVAILABLE or state["gnn_model"] is None:
         return None
     try:
-        model   = state["gnn_model"]
-        data    = state["gnn_data"]
-        c2i     = state["company_to_idx"]
-        i2c     = state["idx_to_company"]
-        device  = state["device"]
+        model      = state["gnn_model"]
+        data       = state["gnn_data"]
+        c2i        = state["company_to_idx"]
+        i2c        = state["idx_to_company"]
+        device     = state["device"]
 
         x          = data.x.clone().to(device)
         edge_index = data.edge_index.to(device)
@@ -266,7 +202,6 @@ def gnn_predict(
                 shock[c2i[company]] = intensity
 
         x_aug = torch.cat([x, shock], dim=1)
-
         with torch.no_grad():
             raw = model(x_aug, edge_index)
 
@@ -296,7 +231,7 @@ async def startup():
         companies = list(G.nodes)
         state["company_to_idx"] = {c: i for i, c in enumerate(companies)}
         state["idx_to_company"] = {i: c for i, c in enumerate(companies)}
-        print(f"[startup] Graph loaded: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+        print(f"[startup] Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
     except Exception as e:
         print(f"[startup] Graph load failed: {e}")
 
@@ -306,7 +241,7 @@ async def startup():
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             state["device"] = device
 
-            data = torch.load(os.path.join(MODEL_DIR, "graph_data.pt"),    map_location=device)
+            data = torch.load(os.path.join(MODEL_DIR, "graph_data.pt"), map_location=device)
             with open(os.path.join(MODEL_DIR, "company_mappings.pkl"), "rb") as f:
                 mappings = pickle.load(f)
 
@@ -318,11 +253,11 @@ async def startup():
             model.load_state_dict(ckpt["model_state_dict"])
             model.to(device).eval()
 
-            state["gnn_model"]       = model
-            state["gnn_data"]        = data
-            state["company_to_idx"]  = mappings["company_to_idx"]
-            state["idx_to_company"]  = mappings["idx_to_company"]
-            print("[startup] GNN model loaded ✓")
+            state["gnn_model"]      = model
+            state["gnn_data"]       = data
+            state["company_to_idx"] = mappings["company_to_idx"]
+            state["idx_to_company"] = mappings["idx_to_company"]
+            print("[startup] GNN model loaded successfully")
         except FileNotFoundError:
             print("[startup] GNN weights not found — using BFS fallback")
         except Exception as e:
@@ -333,12 +268,13 @@ async def startup():
 
 @app.get("/api/health")
 def health():
+    G = state["graph"]
     return {
         "status":       "healthy",
-        "graph_loaded": state["graph"] is not None,
+        "graph_loaded": G is not None,
         "gnn_loaded":   state["gnn_model"] is not None,
-        "nodes":        state["graph"].number_of_nodes() if state["graph"] else 0,
-        "edges":        state["graph"].number_of_edges() if state["graph"] else 0,
+        "nodes":        G.number_of_nodes() if G else 0,
+        "edges":        G.number_of_edges() if G else 0,
         "timestamp":    datetime.now().isoformat(),
     }
 
@@ -352,27 +288,28 @@ def predict(scenario: ShockScenario):
     # Try GNN first, fall back to BFS
     gnn_scores = gnn_predict(scenario.affected_companies, scenario.intensity)
     if gnn_scores:
-        scores        = gnn_scores
+        scores         = gnn_scores
         inference_mode = "gnn"
     else:
-        scores        = bfs_propagate(G, scenario.affected_companies, scenario.intensity)
+        scores         = bfs_propagate(G, scenario.affected_companies, scenario.intensity)
         inference_mode = "bfs"
 
     # Optional Monte Carlo
     mc_stats: Optional[Dict] = None
     if scenario.monte_carlo_n > 0:
-        mc_stats = monte_carlo(G, scenario.affected_companies, scenario.intensity, scenario.monte_carlo_n)
+        mc_stats = monte_carlo(G, scenario.affected_companies,
+                               scenario.intensity, scenario.monte_carlo_n)
 
     # Build response
-    predictions, counts = [], {"critical":0,"high":0,"moderate":0,"low":0}
+    predictions, counts = [], {"critical": 0, "high": 0, "moderate": 0, "low": 0}
     for company, score in sorted(scores.items(), key=lambda x: -x[1]):
         level = categorise(score)
         counts[level] += 1
         node = NodeRisk(
-            company     = company,
-            risk_score  = round(score, 4),
-            risk_level  = level,
-            is_epicenter= company in scenario.affected_companies,
+            company      = company,
+            risk_score   = round(score, 4),
+            risk_level   = level,
+            is_epicenter = company in scenario.affected_companies,
         )
         if mc_stats and company in mc_stats:
             s = mc_stats[company]
@@ -396,12 +333,12 @@ def predict(scenario: ShockScenario):
 @app.get("/api/scenarios")
 def list_scenarios():
     return {"scenarios": [
-        {"name":"Taiwan Earthquake",       "affected":["TSMC"],                         "intensity":0.90,"category":"Natural Disaster"},
-        {"name":"Lithium Supply Shock",    "affected":["Panasonic","LG","CATL","Samsung"],"intensity":0.80,"category":"Resource"},
-        {"name":"AI Chip Shortage",        "affected":["Nvidia"],                        "intensity":0.70,"category":"Demand Shock"},
-        {"name":"Rare Earth Export Ban",   "affected":["ASML","Samsung","SK_Hynix"],     "intensity":0.85,"category":"Geopolitical"},
-        {"name":"Energy Supply Crisis",    "affected":["Samsung","TSMC","Intel","ASML"], "intensity":0.75,"category":"Energy"},
-        {"name":"Port Disruption",         "affected":["Foxconn","Samsung","TSMC","Sony"],"intensity":0.65,"category":"Logistics"},
+        {"name": "Taiwan Earthquake",      "affected": ["TSMC"],                          "intensity": 0.90, "category": "Natural Disaster"},
+        {"name": "Lithium Supply Shock",   "affected": ["Panasonic","LG","CATL","Samsung"],"intensity": 0.80, "category": "Resource"},
+        {"name": "AI Chip Shortage",       "affected": ["Nvidia"],                         "intensity": 0.70, "category": "Demand Shock"},
+        {"name": "Rare Earth Export Ban",  "affected": ["ASML","Samsung","SK_Hynix"],      "intensity": 0.85, "category": "Geopolitical"},
+        {"name": "Energy Supply Crisis",   "affected": ["Samsung","TSMC","Intel","ASML"],  "intensity": 0.75, "category": "Energy"},
+        {"name": "Port Disruption",        "affected": ["Foxconn","Samsung","TSMC","Sony"],"intensity": 0.65, "category": "Logistics"},
     ]}
 
 
@@ -415,11 +352,11 @@ def graph_info():
     return {
         "nodes": [
             {
-                "company":      n,
-                "in_degree":    G.in_degree(n),
-                "out_degree":   G.out_degree(n),
-                "pagerank":     round(pr[n], 5),
-                "betweenness":  round(bc[n], 5),
+                "company":     n,
+                "in_degree":   G.in_degree(n),
+                "out_degree":  G.out_degree(n),
+                "pagerank":    round(pr[n], 5),
+                "betweenness": round(bc[n], 5),
             }
             for n in sorted(G.nodes, key=lambda x: -pr[x])
         ],
