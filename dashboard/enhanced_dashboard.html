@@ -34,7 +34,6 @@
     }
     .mono { font-family: 'IBM Plex Mono', monospace; }
 
-    /* Grid background */
     body::before {
       content: '';
       position: fixed;
@@ -115,26 +114,6 @@
     .dot-online { background: var(--success); box-shadow: 0 0 6px var(--success); }
     .dot-offline { background: var(--muted); }
     .dot-checking { background: var(--warn); animation: pulse 1s infinite; }
-
-    .mc-bar {
-      height: 20px;
-      border-radius: 3px;
-      background: linear-gradient(90deg, rgba(0,212,255,0.2), rgba(0,212,255,0.6));
-      position: relative;
-      transition: width 0.6s ease;
-    }
-    .mc-bar .p95-marker {
-      position: absolute;
-      right: 0; top: 0; bottom: 0;
-      width: 2px;
-      background: var(--danger);
-    }
-    .mc-bar .p50-marker {
-      position: absolute;
-      top: 0; bottom: 0;
-      width: 2px;
-      background: var(--accent);
-    }
   </style>
 </head>
 <body>
@@ -144,7 +123,6 @@
 const { useState, useEffect, useRef, useCallback } = React;
 
 /* ─── GRAPH ENGINE ──────────────────────────────────────────────────────── */
-// Loads connections.csv and builds adjacency for real propagation
 
 const RAW_EDGES = [
   {source:'Nvidia',target:'TSMC',rel:'Supplier'},
@@ -177,73 +155,38 @@ const RAW_EDGES = [
   {source:'Tencent',target:'Nvidia',rel:'Customer'},
 ];
 
-// Build proper adjacency from real edge data
+/*
+ * Edge semantics in RAW_EDGES:
+ *   rel='Supplier': source uses target as supplier => target supplies source => risk: target -> source
+ *   rel='Customer': source is a customer of target  => target supplies source => risk: target -> source
+ *
+ * In both cases: downstream[target].add(source)
+ *                upstream[source].add(target)
+ */
 function buildGraph(edges) {
-  /*
-   * CSV semantics:
-   *   source=Nvidia, target=TSMC, rel=Supplier  => TSMC supplies Nvidia => TSMC -> Nvidia
-   *   source=Microsoft, target=Nvidia, rel=Customer => Nvidia supplies Microsoft => Nvidia -> Microsoft
-   *
-   * Both cases: the ACTUAL supplier is `target` for Supplier rows,
-   *             and `target` for Customer rows too.
-   * Rule: supplier = target, customer = source  (for Supplier rows)
-   *       supplier = target, customer = source  (for Customer rows — same logic!)
-   *
-   * In other words: always add_edge(target, source) regardless of rel type,
-   * because the risk/supply always flows from target -> source in this CSV format.
-   */
-  const downstream = {};   // downstream[A] = Set of companies A supplies (A -> them)
-  const upstream   = {};   // upstream[A]   = Set of companies that supply A (them -> A)
+  const downstream = {};  // downstream[A] = companies A supplies
+  const upstream   = {};  // upstream[A]   = companies that supply A
   const nodes      = new Set();
- 
-  edges.forEach(({ source, target, rel }) => {
+
+  edges.forEach(({ source, target }) => {
     nodes.add(source);
     nodes.add(target);
- 
-    // supplier is always `target`, customer is always `source`
+
     const supplier  = target;
     const customer  = source;
- 
+
     if (!downstream[supplier]) downstream[supplier] = new Set();
     if (!upstream[customer])   upstream[customer]   = new Set();
- 
+
     downstream[supplier].add(customer);
     upstream[customer].add(supplier);
   });
- 
+
   return { downstream, upstream, nodes: [...nodes] };
 }
- 
-// ── RAW_EDGES — unchanged from original, just needs correct buildGraph ────────
-// (Keep your existing RAW_EDGES array here — no changes needed to the data itself)
- 
-// ── FIXED propagateRisk ───────────────────────────────────────────────────────
-// This function is correct in the original once buildGraph is fixed,
-// because it reads from GRAPH.downstream and GRAPH.upstream which will
-// now be populated correctly. No changes needed to propagateRisk itself.
- 
-// ── Sanity check you can paste into browser console ──────────────────────────
-/*
-  After the fix, run in browser console to verify:
- 
-  const g = buildGraph(RAW_EDGES);
- 
-  // TSMC should appear in downstream of its real suppliers (Shin-Etsu, ASML, etc.)
-  // AND TSMC's customers should appear in downstream[TSMC]
-  console.log("TSMC downstream (companies TSMC supplies):", [...(g.downstream['TSMC'] || [])]);
-  // Expected: Apple, Nvidia, AMD, Qualcomm, MediaTek, Sony, Intel, etc.
- 
-  console.log("TSMC upstream (who supplies TSMC):", [...(g.upstream['TSMC'] || [])]);
-  // Expected: ASML, Applied Materials, Lam Research, Shin-Etsu, etc.
- 
-  // Nvidia downstream should be its customers (Microsoft, Tesla, Google, etc.)
-  console.log("Nvidia downstream:", [...(g.downstream['Nvidia'] || [])]);
-  // Expected: Microsoft, Tesla, Google, Amazon, Meta, etc.
-*/
 
-// BFS-based propagation — replaces hardcoded dependency map
-// Downstream: supplier shock ripples to customers (intensity * 0.75 per hop)
-// Upstream:   demand shock ripples to suppliers  (intensity * 0.45 per hop)
+const GRAPH = buildGraph(RAW_EDGES);
+
 function propagateRisk(epicenters, intensity) {
   const scores = {};
   GRAPH.nodes.forEach(n => scores[n] = 0);
@@ -267,7 +210,7 @@ function propagateRisk(epicenters, intensity) {
     });
   }
 
-  // Upstream BFS (demand shock, weaker)
+  // Upstream BFS (weaker)
   const upQueue = [...epicenters];
   const upVisited = new Set(epicenters);
   const DECAY_UP = 0.42;
@@ -288,34 +231,39 @@ function propagateRisk(epicenters, intensity) {
   return scores;
 }
 
-// Real Monte Carlo: run N iterations, compute p5/p50/p95 per node
+// FIX: compute std in a second pass AFTER mean is known — no forward reference
 function runMonteCarlo(epicenters, intensity, N = 500) {
   const perNode = {};
   GRAPH.nodes.forEach(n => perNode[n] = []);
 
   for (let i = 0; i < N; i++) {
-    // Perturb intensity slightly (model uncertainty)
     const perturbedIntensity = Math.min(1, intensity * (0.85 + Math.random() * 0.30));
     const scores = propagateRisk(epicenters, perturbedIntensity);
     Object.entries(scores).forEach(([node, score]) => perNode[node].push(score));
   }
 
   const results = {};
+
+  // First pass: compute mean, p5, p50, p95
   Object.entries(perNode).forEach(([node, samples]) => {
     const sorted = [...samples].sort((a, b) => a - b);
+    const mean   = samples.reduce((a, b) => a + b, 0) / N;
     results[node] = {
-      mean:  samples.reduce((a, b) => a + b, 0) / N,
-      p5:    sorted[Math.floor(N * 0.05)],
-      p50:   sorted[Math.floor(N * 0.50)],
-      p95:   sorted[Math.floor(N * 0.95)],
-      std:   Math.sqrt(samples.reduce((a, b) => a + (b - results?.[node]?.mean || 0) ** 2, 0) / N),
+      mean,
+      p5:  sorted[Math.floor(N * 0.05)],
+      p50: sorted[Math.floor(N * 0.50)],
+      p95: sorted[Math.floor(N * 0.95)],
+      std: 0,  // placeholder, filled in second pass
     };
   });
-  // Fix std after mean is computed
+
+  // Second pass: compute std now that mean is available
   Object.entries(perNode).forEach(([node, samples]) => {
     const mean = results[node].mean;
-    results[node].std = Math.sqrt(samples.reduce((a, b) => a + (b - mean) ** 2, 0) / N);
+    const variance = samples.reduce((acc, v) => acc + (v - mean) ** 2, 0) / N;
+    results[node].std = Math.sqrt(variance);
   });
+
   return results;
 }
 
@@ -330,7 +278,6 @@ async function apiPredict(epicenters, intensity) {
   });
   if (!res.ok) throw new Error(`API ${res.status}`);
   const data = await res.json();
-  // Normalise to { company: score } map
   const scores = {};
   data.predictions.forEach(p => { scores[p.company] = p.risk_score; });
   return scores;
@@ -378,7 +325,6 @@ function NetworkViz({ scores, epicenters }) {
     const angle = (2 * Math.PI) / N;
     const pos = {};
     nodes.forEach((n, i) => {
-      // Cluster by role
       const r = 2.2 + (Math.random() - 0.5) * 0.4;
       pos[n] = { x: Math.cos(i * angle) * r, y: Math.sin(i * angle) * r };
     });
@@ -446,37 +392,33 @@ function MCPanel({ mcResults }) {
   return (
     <div className="fade-in">
       <div style={{ marginBottom: 12, display:'flex', gap:16, fontSize:11, color:'var(--muted)', fontFamily:'IBM Plex Mono' }}>
-        <span>■ <span style={{color:'var(--accent)'}}>P50 median</span></span>
-        <span>■ <span style={{color:'var(--danger)'}}>P95 tail risk</span></span>
-        <span style={{marginLeft:'auto'}}>n=500 iterations · model uncertainty ±15%</span>
+        <span>&#9632; <span style={{color:'var(--accent)'}}>P50 median</span></span>
+        <span>&#9632; <span style={{color:'var(--danger)'}}>P95 tail risk</span></span>
+        <span style={{marginLeft:'auto'}}>n=500 iterations &middot; model uncertainty &plusmn;15%</span>
       </div>
       {sorted.map(([node, v]) => (
         <div key={node} style={{ marginBottom: 10 }}>
           <div style={{ display:'flex', justifyContent:'space-between', marginBottom:3 }}>
             <span style={{ fontFamily:'IBM Plex Mono', fontSize:12, color:'var(--text)' }}>{node}</span>
             <span style={{ fontFamily:'IBM Plex Mono', fontSize:11, color:'var(--muted)' }}>
-              μ={( v.mean*100).toFixed(1)}% · σ={(v.std*100).toFixed(1)}% · p95={(v.p95*100).toFixed(1)}%
+              &mu;={( v.mean*100).toFixed(1)}% &middot; &sigma;={(v.std*100).toFixed(1)}% &middot; p95={(v.p95*100).toFixed(1)}%
             </span>
           </div>
           <div style={{ position:'relative', height:16, background:'var(--surface2)', borderRadius:3, overflow:'hidden' }}>
-            {/* p5–p95 confidence band */}
             <div style={{
               position:'absolute', top:0, bottom:0,
               left:`${v.p5*100}%`,
               width:`${(v.p95-v.p5)*100}%`,
               background:'rgba(0,212,255,0.12)',
             }} />
-            {/* p50 line */}
             <div style={{
               position:'absolute', top:0, bottom:0, width:2,
               left:`${v.p50*100}%`, background:'var(--accent)',
             }} />
-            {/* p95 marker */}
             <div style={{
               position:'absolute', top:0, bottom:0, width:2,
               left:`${v.p95*100}%`, background:'var(--danger)',
             }} />
-            {/* mean bar */}
             <div style={{
               position:'absolute', top:'25%', bottom:'25%',
               left:0, width:`${v.mean*100}%`,
@@ -496,13 +438,12 @@ function App() {
   const [scores, setScores] = useState(null);
   const [mcResults, setMcResults] = useState(null);
   const [mcLoading, setMcLoading] = useState(false);
-  const [apiStatus, setApiStatus] = useState('checking'); // checking | online | offline
-  const [apiMode, setApiMode] = useState(false); // true = use real API
-  const [tab, setTab] = useState('network'); // network | rankings | mc
+  const [apiStatus, setApiStatus] = useState('checking');
+  const [apiMode, setApiMode] = useState(false);
+  const [tab, setTab] = useState('network');
   const [customEpis, setCustomEpis] = useState([]);
   const [customIntensity, setCustomIntensity] = useState(80);
 
-  // Check API on mount
   useEffect(() => {
     setApiStatus('checking');
     checkApiHealth().then(ok => {
@@ -525,7 +466,6 @@ function App() {
         console.warn('API failed, falling back to local propagation:', e);
       }
     }
-    // Local graph propagation (real BFS, not hardcoded)
     setScores(propagateRisk(scenario.affected, scenario.intensity));
   }, [apiMode, apiStatus]);
 
@@ -545,7 +485,6 @@ function App() {
     if (!activeScenario) return;
     setMcLoading(true);
     setTab('mc');
-    // Run in next tick so UI updates first
     setTimeout(() => {
       const results = runMonteCarlo(activeScenario.affected, activeScenario.intensity, 500);
       setMcResults(results);
@@ -571,22 +510,22 @@ function App() {
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12 }}>
           <div>
             <div style={{ fontFamily:'IBM Plex Mono', fontSize:11, color:'var(--accent)', letterSpacing:'0.15em', marginBottom:6 }}>
-              SUPPLY CHAIN RISK · GNN PROPAGATION ENGINE
+              SUPPLY CHAIN RISK &middot; GNN PROPAGATION ENGINE
             </div>
             <h1 style={{ fontSize:26, fontWeight:600, letterSpacing:'-0.02em', color:'var(--text)' }}>
               Systemic Risk Analyzer
             </h1>
             <p style={{ color:'var(--muted)', fontSize:13, marginTop:4 }}>
-              Graph Attention Network · BFS propagation from real edge data · Monte Carlo uncertainty quantification
+              Graph Attention Network &middot; BFS propagation from real edge data &middot; Monte Carlo uncertainty quantification
             </p>
           </div>
           <div style={{ display:'flex', alignItems:'center', gap:8, fontFamily:'IBM Plex Mono', fontSize:12 }}>
             <span className={`api-status-dot dot-${apiStatus}`} />
             <span style={{ color: apiStatus==='online' ? 'var(--success)' : apiStatus==='checking' ? 'var(--warn)' : 'var(--muted)' }}>
-              {apiStatus==='online' ? 'API ONLINE' : apiStatus==='checking' ? 'CHECKING API…' : 'LOCAL MODE'}
+              {apiStatus==='online' ? 'API ONLINE' : apiStatus==='checking' ? 'CHECKING API...' : 'LOCAL MODE'}
             </span>
             {apiStatus !== 'online' && (
-              <span style={{ color:'var(--muted)', fontSize:10 }}>· start FastAPI on :8000 to enable GNN</span>
+              <span style={{ color:'var(--muted)', fontSize:10 }}>&middot; start FastAPI on :8000 to enable GNN</span>
             )}
           </div>
         </div>
@@ -597,7 +536,6 @@ function App() {
         {/* LEFT: Scenario Panel */}
         <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
 
-          {/* Predefined Scenarios */}
           <div className="card" style={{ padding:16 }}>
             <div style={{ fontFamily:'IBM Plex Mono', fontSize:10, color:'var(--muted)', letterSpacing:'0.12em', marginBottom:12 }}>
               CRISIS SCENARIOS
@@ -614,7 +552,7 @@ function App() {
                   </div>
                   <p style={{ fontSize:11, color:'var(--muted)', lineHeight:1.4 }}>{s.desc}</p>
                   <div style={{ marginTop:6, fontSize:10, fontFamily:'IBM Plex Mono', color:'var(--muted)' }}>
-                    {s.affected.join(' · ')}
+                    {s.affected.join(' \u00b7 ')}
                   </div>
                 </button>
               ))}
@@ -648,7 +586,7 @@ function App() {
             </div>
             <button className="btn-primary" style={{ width:'100%' }}
               disabled={!customEpis.length} onClick={runCustom}>
-              RUN CUSTOM → 
+              RUN CUSTOM &#8594;
             </button>
           </div>
         </div>
@@ -658,12 +596,12 @@ function App() {
 
           {!scores && (
             <div className="card" style={{ padding:60, textAlign:'center' }}>
-              <div style={{ fontSize:40, marginBottom:16 }}>⬡</div>
+              <div style={{ fontSize:40, marginBottom:16 }}>&#11041;</div>
               <div style={{ fontFamily:'IBM Plex Mono', fontSize:14, color:'var(--muted)', letterSpacing:'0.05em' }}>
                 SELECT A SCENARIO TO PROPAGATE
               </div>
               <p style={{ color:'var(--muted)', fontSize:12, marginTop:8 }}>
-                Risk propagates via BFS over real supply chain graph · {GRAPH.nodes.length} nodes · {RAW_EDGES.length} edges
+                Risk propagates via BFS over real supply chain graph &middot; {GRAPH.nodes.length} nodes &middot; {RAW_EDGES.length} edges
               </p>
             </div>
           )}
@@ -703,7 +641,7 @@ function App() {
                 {activeScenario && tab === 'mc' && !mcResults && (
                   <button className="btn-primary" style={{ marginLeft:'auto' }}
                     onClick={runMC} disabled={mcLoading}>
-                    {mcLoading ? <span className="pulse">RUNNING 500 ITERATIONS…</span> : 'RUN SIMULATION →'}
+                    {mcLoading ? <span className="pulse">RUNNING 500 ITERATIONS...</span> : 'RUN SIMULATION \u2192'}
                   </button>
                 )}
               </div>
@@ -714,7 +652,7 @@ function App() {
                   <div className="fade-in">
                     <NetworkViz scores={scores} epicenters={activeScenario?.affected || []} />
                     <p style={{ textAlign:'center', fontSize:11, color:'var(--muted)', fontFamily:'IBM Plex Mono', marginTop:8 }}>
-                      Node size ∝ risk score · Blue ring = epicenter · Edges from connections.csv
+                      Node size &prop; risk score &middot; Blue ring = epicenter &middot; Edges from connections.csv
                     </p>
                   </div>
                 )}
@@ -722,7 +660,7 @@ function App() {
                 {tab === 'rankings' && (
                   <div className="fade-in">
                     <div style={{ fontFamily:'IBM Plex Mono', fontSize:10, color:'var(--muted)', letterSpacing:'0.12em', marginBottom:14 }}>
-                      PROPAGATED RISK SCORES — sorted descending · threshold &gt;5%
+                      PROPAGATED RISK SCORES &mdash; sorted descending &middot; threshold &gt;5%
                     </div>
                     {sorted.map(([company, score], i) => {
                       const lvl = riskLevel(score);
@@ -773,14 +711,14 @@ function App() {
                           Click "RUN SIMULATION" above to quantify propagation uncertainty
                         </div>
                         <p style={{ fontSize:11 }}>
-                          500 iterations with ±15% intensity perturbation · computes p5/p50/p95 per node
+                          500 iterations with &plusmn;15% intensity perturbation &middot; computes p5/p50/p95 per node
                         </p>
                       </div>
                     )}
                     {mcLoading && (
                       <div style={{ textAlign:'center', padding:40 }}>
                         <div style={{ fontFamily:'IBM Plex Mono', fontSize:13, color:'var(--accent)' }} className="pulse">
-                          RUNNING 500 MONTE CARLO ITERATIONS…
+                          RUNNING 500 MONTE CARLO ITERATIONS...
                         </div>
                       </div>
                     )}
@@ -798,10 +736,10 @@ function App() {
                     {Math.round(activeScenario.intensity*100)}% INTENSITY
                   </span>
                   <span style={{ fontFamily:'IBM Plex Mono', fontSize:11, color:'var(--muted)' }}>
-                    EPICENTERS: {activeScenario.affected.join(' · ')}
+                    EPICENTERS: {activeScenario.affected.join(' \u00b7 ')}
                   </span>
                   <span style={{ fontFamily:'IBM Plex Mono', fontSize:10, color:'var(--muted)', marginLeft:'auto' }}>
-                    {apiMode && apiStatus==='online' ? '⬡ GNN API' : '⬡ LOCAL BFS'}
+                    {apiMode && apiStatus==='online' ? '\u29c6 GNN API' : '\u29c6 LOCAL BFS'}
                   </span>
                 </div>
               )}
